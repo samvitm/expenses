@@ -1,1 +1,277 @@
-Yo! github page
+<!DOCTYPE html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expenses</title>
+  <meta name="description" content="Expense manager by analysing emails">
+  <meta name="google-signin-client_id" content="267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com">
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+  <link rel="stylesheet" href="/css/bulma.min.css">
+</head>
+
+<body class="layout-default page-layout">
+
+  <section class="hero is-medium is-bold is-info">
+  <!-- Hero header: will stick at the top -->
+  <div class="hero-header">
+    <header class="header">
+      <div class="container">
+        <div class="header-left">
+          <h1 class="header-item is-large">Expenses</h1>
+        </div>
+        <span class="header-toggle">
+          <span></span>
+          <span></span>
+          <span></span>
+        </span>
+        <div class="header-right header-menu">
+
+          <span class="header-item">
+            <a class="button is-primary is-inverted" id="my-signin2">
+              <span class="icon">
+                <i class="fa fa-google"></i>
+              </span>
+              <span>Sign in with Google</span>
+            </a>
+          </span>
+
+          <a class="header-item" id='list-messages'>
+            List Messages
+          </a>
+
+
+          <a class="header-item" onclick="signOut();">
+            Sign out
+          </a>
+
+        </div>
+      </div>
+    </header>
+  </div>
+
+  <!-- Hero content: will be in the middle -->
+  <div class="hero-content">
+    <div class="container">
+      <h1 class="title">
+        Expenses
+      </h1>
+      <h2 class="subtitle">
+        Manage my CitiBank Expenses by reading email
+      </h2>
+    </div>
+  </div>
+
+</section>
+
+  <section class="section">
+    <div class="container">
+      <div class="columns">
+        <div class="column is-2">
+
+          <aside class="menu">
+            <p class="menu-label">
+              General
+            </p>
+            <ul class="menu-list">
+              <li><a href="#">Dashboard</a></li>
+            </ul>
+            <p class="menu-label">
+              Transactions
+            </p>
+            <ul class="menu-list">
+              <li><a href="#">Credit</a></li>
+              <li><a href="#">Debit</a></li>
+              <li><a href="#">Balance</a></li>
+            </ul>
+          </aside>
+
+        </div>
+        <div class="column">
+            CONTENT
+        </div>
+      </div>
+    </div>
+  </section>
+
+</body>
+
+<script type="text/javascript">
+
+var googleAuthInstance;
+
+function onSignIn(googleUser) {
+  var profile = googleUser.getBasicProfile();
+  console.log('ID: ' + profile.getId()); // Do not send to your backend! Use an ID token instead.
+  console.log('Name: ' + profile.getName());
+  console.log('Image URL: ' + profile.getImageUrl());
+  console.log('Email: ' + profile.getEmail());
+}
+
+function onFailure(error) {
+  console.log(error);
+}
+
+var initClient = function() {
+    gapi.load('auth2', function(){
+        googleAuthInstance = gapi.auth2.init({
+            client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com'
+            scope: 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
+        });
+        googleAuthInstance.attachClickHandler('my-signin2', {}, onSignIn, onFailure);
+    });
+};
+
+function renderButton() {
+  console.log('rendering button')
+
+       auth2 = gapi.auth2.init({
+           client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com'
+       });
+
+  gapi.signin2.render('my-signin2', {
+    'scope': 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
+    'width': 100,
+    'height': 30,
+    'longtitle': false,
+    // 'theme': 'dark',
+    'onsuccess': onSignIn,
+    'onfailure': onFailure
+  });
+}
+
+function signOut() {
+   var auth2 = gapi.auth2.getAuthInstance();
+   auth2.signOut().then(function () {
+     console.log('User signed out.');
+   });
+ }
+
+function getMessage(userId, messageId, callback) {
+  var request = gapi.client.gmail.users.messages.get({
+    'userId': userId,
+    'id': messageId
+  });
+  request.execute(callback);
+}
+
+
+function listMessages(userId, query, callback) {
+  console.log("In list messages",userId,query);
+
+  var getPageOfMessages = function(request, result) {
+    request.execute(function(resp) {
+      result = result.concat(resp.messages);
+      console.log("in request execute",resp);
+      var nextPageToken = resp.nextPageToken;
+      // if (nextPageToken) {
+      //   request = gapi.client.gmail.users.messages.list({
+      //     'userId': userId,
+      //     'pageToken': nextPageToken,
+      //     'q': query,
+      //     maxResults: 20
+      //   });
+      //   getPageOfMessages(request, result);
+      // } else {
+        callback(result);
+      //}
+    });
+  };
+
+  var initialRequest = gapi.client.gmail.users.messages.list({
+    'userId': userId,
+    'q': query,
+    maxResults: 10
+  });
+
+  getPageOfMessages(initialRequest, []);
+}
+
+var readMessage = function(message){
+  console.log(message);
+  var metaData = getMetaData(message);
+  var extractedData = extractData(message,metaData);
+  var messageObj = {
+    metaData : metaData,
+    transactionString : extractedData.transactionString,
+    rawHtml : extractedData.rawHtml,
+    id : message.id,
+    mimeType: message.payload.mimeType
+  }
+
+  console.log(messageObj);
+}
+
+var extractData = function(message){
+  var messageBase64 ;
+  if(message.payload.mimeType == "text/html"){
+    messageBase64 = message.payload.body.data;
+  } else if(message.payload.mimeType == "multipart/mixed") {
+    messageBase64 = "";
+    message.payload.parts.forEach(function(p){
+      if(p.mimeType == "text/plain" || p.mimeType == "text/html"){
+        var data = p.body.data;
+        messageBase64 += data;
+      }
+    });
+  }
+  messageBase64 = messageBase64.replace(/-/g, '+').replace(/_/g, '/');
+  var messageHTML = atob(messageBase64);
+  var amountStringRegex = /Rs.*/;
+  var found = messageHTML.match(amountStringRegex);
+  //console.log(found);
+  return {
+    rawHtml : messageHTML,
+    transactionString : found[0],
+  }
+};
+
+var getMetaData = function(message){
+  var headers = message.payload.headers;
+  metaData = {};
+  headers.forEach(function(h){
+    var name = h.name;
+
+    if(name == "Date"){
+      metaData["date"] = h.value;
+    } else if (name == "Subject"){
+      metaData["subject"] = h.value;
+    }
+  });
+
+  if(metaData["subject"].indexOf("credit card") > -1){
+    metaData["transactionType"] = "credit";
+  } else if (metaData["subject"].indexOf("Debit Card") > -1){
+    metaData["transactionType"] = "debit";
+  } else if (metaData["subject"].indexOf("Balance in your account") > -1){
+    metaData["transactionType"] = "balance"
+  }
+
+  return metaData;
+};
+
+var listMessagesElement = document.querySelector('#list-messages');
+listMessagesElement.addEventListener("click",function(){
+  console.log("Clicked list messages button");
+
+  var callbackFn = function(messages){
+    console.log(messages.length);
+    messages.forEach(function(m){
+      console.log(m);
+      getMessage('me',m.id,readMessage);
+    });
+  }
+  listMessages('me','citialert',callbackFn);
+});
+
+var handleClientLoad = function(){
+  console.log('loading gmail client')
+  gapi.client.load('gmail', 'v1');
+};
+
+
+</script>
+<script src="https://apis.google.com/js/platform.js?onload=initClient" async defer></script>
+<script src="https://apis.google.com/js/client.js?onload=handleClientLoad" async defer></script>
+<script src="http://cdn.jsdelivr.net/alasql/0.2/alasql.min.js"></script>
