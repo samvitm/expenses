@@ -58,7 +58,7 @@
         Expenses
       </h1>
       <h2 class="subtitle">
-        Manage my CitiBank Expenses by reading email
+        View CitiBank Expenses by reading Gmail
       </h2>
     </div>
   </div>
@@ -99,7 +99,7 @@
 
 <script type="text/javascript">
 
-var googleAuthInstance;
+var googleAuthInstance = {};
 
 function onSignIn(googleUser) {
   var profile = googleUser.getBasicProfile();
@@ -114,32 +114,14 @@ function onFailure(error) {
 }
 
 var initClient = function() {
-    gapi.load('auth2', function(){
-        googleAuthInstance = gapi.auth2.init({
-            client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com'
-            scope: 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
-        });
-        googleAuthInstance.attachClickHandler('my-signin2', {}, onSignIn, onFailure);
-    });
-};
-
-function renderButton() {
-  console.log('rendering button')
-
-       auth2 = gapi.auth2.init({
-           client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com'
-       });
-
-  gapi.signin2.render('my-signin2', {
-    'scope': 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
-    'width': 100,
-    'height': 30,
-    'longtitle': false,
-    // 'theme': 'dark',
-    'onsuccess': onSignIn,
-    'onfailure': onFailure
+  gapi.load('auth2', function(){
+      googleAuthInstance = gapi.auth2.init({
+          client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com',
+          scope: 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
+      });
+      googleAuthInstance.attachClickHandler('my-signin2', {}, onSignIn, onFailure);
   });
-}
+};
 
 function signOut() {
    var auth2 = gapi.auth2.getAuthInstance();
@@ -148,59 +130,60 @@ function signOut() {
    });
  }
 
-function getMessage(userId, messageId, callback) {
+function getMessage(messageId) {
   var request = gapi.client.gmail.users.messages.get({
-    'userId': userId,
+    'userId': 'me',
     'id': messageId
   });
-  request.execute(callback);
+  var promise = new Promise(function(resolve,reject){
+      request.execute(function(data){
+        resolve(data);
+      });
+  });
+
+  return promise;
 }
 
 
-function listMessages(userId, query, callback) {
-  console.log("In list messages",userId,query);
+function fetchMessageIds(query) {
 
-  var getPageOfMessages = function(request, result) {
-    request.execute(function(resp) {
-      result = result.concat(resp.messages);
-      console.log("in request execute",resp);
-      var nextPageToken = resp.nextPageToken;
-      // if (nextPageToken) {
-      //   request = gapi.client.gmail.users.messages.list({
-      //     'userId': userId,
-      //     'pageToken': nextPageToken,
-      //     'q': query,
-      //     maxResults: 20
-      //   });
-      //   getPageOfMessages(request, result);
-      // } else {
-        callback(result);
-      //}
+  var promise = new Promise(function(resolve,reject){
+
+    var getPageOfMessages = function(request, result) {
+      request.execute(function(resp) {
+        result = result.concat(resp.messages);
+        var nextPageToken = resp.nextPageToken;
+        //write nextPageToken logic in the future
+        resolve(result);
+      });
+    };
+
+    var initialRequest = gapi.client.gmail.users.messages.list({
+      'userId': 'me',
+      'q': query,
+      maxResults: 10
     });
-  };
 
-  var initialRequest = gapi.client.gmail.users.messages.list({
-    'userId': userId,
-    'q': query,
-    maxResults: 10
+    getPageOfMessages(initialRequest, []);
+
   });
 
-  getPageOfMessages(initialRequest, []);
+  return promise;
 }
 
 var readMessage = function(message){
-  console.log(message);
+  //console.log("Reading message",message);
   var metaData = getMetaData(message);
   var extractedData = extractData(message,metaData);
   var messageObj = {
     metaData : metaData,
-    transactionString : extractedData.transactionString,
-    rawHtml : extractedData.rawHtml,
+    extractedData : extractedData,
     id : message.id,
     mimeType: message.payload.mimeType
   }
+  //writeMessageToDB(messageObj);
+  return messageObj;
 
-  console.log(messageObj);
 }
 
 var extractData = function(message){
@@ -245,30 +228,92 @@ var getMetaData = function(message){
   } else if (metaData["subject"].indexOf("Debit Card") > -1){
     metaData["transactionType"] = "debit";
   } else if (metaData["subject"].indexOf("Balance in your account") > -1){
-    metaData["transactionType"] = "balance"
+    metaData["transactionType"] = "balance";
+  } else if (metaData["subject"].indexOf("ATM Withdrawal Alert") > -1){
+    metaData["transactionType"] = "withdrawal";
+  } else {
+    metaData["transactionType"] = metaData["subject"];
   }
 
   return metaData;
 };
 
-var listMessagesElement = document.querySelector('#list-messages');
-listMessagesElement.addEventListener("click",function(){
-  console.log("Clicked list messages button");
-
-  var callbackFn = function(messages){
-    console.log(messages.length);
-    messages.forEach(function(m){
-      console.log(m);
-      getMessage('me',m.id,readMessage);
-    });
-  }
-  listMessages('me','citialert',callbackFn);
-});
-
 var handleClientLoad = function(){
   console.log('loading gmail client')
   gapi.client.load('gmail', 'v1');
 };
+
+var initDB = function(){
+  var db = new alasql.Database('expenses');
+  //console.log(alasql.databases.expenses);
+  db.exec("create table transactions (id string, vdate date, transactionString string, type string)")
+}
+
+var writeMessageToDB = function(message){
+  var db = alasql.databases.expenses;
+  var insertQuery = "INSERT INTO transactions values(%id , %metaData.date, %extractedData.transactionString, %metaData.transactionType)";
+  var finalQuery = parameterizedQuery(insertQuery,message);
+  //console.log(finalQuery);
+  db.exec(finalQuery);
+}
+
+var parameterizedQuery = function(query,obj){
+  var parameters = /%(.*?)[,\)\s*]/g;
+  var found;
+  var newQuery = query;
+  while ((found = parameters.exec(query)) !== null) {
+    //console.log("Found",found);
+    var attr = found[1];
+    var replace = getNestedAttrValue(obj,attr);
+    newQuery = newQuery.replace("%"+attr,'"'+replace+'"');
+
+  }
+  //console.log(newQuery);
+  return newQuery;
+}
+
+var getNestedAttrValue = function(obj,attr){
+  var value;
+  attr.split(".").reduce(function(pre,cur){
+    if(pre.hasOwnProperty(cur)){
+      value = pre[cur];
+    }
+    return value
+  },obj);
+  return value;
+}
+
+var fetchAllMessages = function(messageIds){
+  var promises = []
+  messageIds.forEach(function(m){
+    var messagePromise = getMessage(m.id);
+    promises.push(messagePromise);
+  });
+  return promises;
+}
+
+var processAllMessages = function(allMessagesPromise){
+  allMessagesPromise.forEach(function(messagePromise){
+    messagePromise.then(function(m){
+      var message = readMessage(m);
+      console.log(message);
+      writeMessageToDB(message);
+    });
+  });
+}
+
+
+
+document.addEventListener("DOMContentLoaded", function() {
+  initDB();
+  var listMessagesElement = document.querySelector('#list-messages');
+  listMessagesElement.addEventListener("click",function(){
+    var emailQuery = "citialert";
+    fetchMessageIds(emailQuery)
+    .then(fetchAllMessages)
+    .then(processAllMessages)
+  });
+});
 
 
 </script>
