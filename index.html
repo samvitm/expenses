@@ -13,7 +13,7 @@
 
 <body class="layout-default page-layout">
 
-  <section class="hero is-medium is-bold is-info">
+  <section class="hero is-bold is-info">
   <!-- Hero header: will stick at the top -->
   <div class="hero-header">
     <header class="header">
@@ -67,9 +67,8 @@
 
   <section class="section">
     <div class="container">
-      <div class="columns">
+      <div class="columns is-mobile">
         <div class="column is-2">
-
           <aside class="menu">
             <p class="menu-label">
               General
@@ -89,7 +88,12 @@
 
         </div>
         <div class="column">
+          <div id="content">
             CONTENT
+          </div>
+        </div>
+        <div class="column is-2">
+          RIGHT PANEL
         </div>
       </div>
     </div>
@@ -146,6 +150,7 @@ function getMessage(messageId) {
 
 
 function fetchMessageIds(query) {
+  console.log("Fetching all message ids");
 
   var promise = new Promise(function(resolve,reject){
 
@@ -284,6 +289,7 @@ var getNestedAttrValue = function(obj,attr){
 }
 
 var fetchAllMessages = function(messageIds){
+  console.log("Fetching all message content for ids: ",messageIds);
   var promises = []
   messageIds.forEach(function(m){
     var messagePromise = getMessage(m.id);
@@ -293,13 +299,37 @@ var fetchAllMessages = function(messageIds){
 }
 
 var processAllMessages = function(allMessagesPromise){
+  console.log("Processing all messages");
+  var allMessagesProcessedPromise = [];
   allMessagesPromise.forEach(function(messagePromise){
-    messagePromise.then(function(m){
-      var message = readMessage(m);
-      console.log(message);
-      writeMessageToDB(message);
+    var promise = new Promise(function(resolve,reject){
+      messagePromise.then(function(m){
+        var message = readMessage(m);
+        console.log(message);
+        writeMessageToDB(message);
+        resolve(message);
+      }).catch(function(reason){
+        reject(reason);
+      });
     });
+    allMessagesProcessedPromise.push(promise);
   });
+  var wrapperPromise = new Promise(function(resolve,reject){
+    Promise.all(allMessagesProcessedPromise).then(function(values){
+      resolve(values);
+    })
+  });
+  return wrapperPromise;
+}
+
+var renderExpensesTable = function(){
+  console.log("Rendering Expenses table");
+  var db = alasql.databases.expenses;
+  var transactions = db.exec("SELECT * FROM transactions");
+  var template = _.template(document.querySelector("#transaction-template").innerHTML);
+  var contentDiv = document.querySelector("#content");
+  var tableHTML = template({transactions: transactions});
+  contentDiv.innerHTML = tableHTML;
 }
 
 
@@ -312,11 +342,35 @@ document.addEventListener("DOMContentLoaded", function() {
     fetchMessageIds(emailQuery)
     .then(fetchAllMessages)
     .then(processAllMessages)
+    .then(renderExpensesTable);
   });
 });
 
 
 </script>
+<!-- BEGIN: Underscore Template Definition. -->
+<script type="text/template" class="templates" id="transaction-template">
+<table class="table">
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Transaction</th>
+      <th>Type</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% _.each(transactions,function(t){ %>
+      <tr>
+        <td><%= t.vdate %></td>
+        <td><%= t.transactionString %></td>
+        <td><%= t.type %>
+      </tr>
+    <% }); %>
+  </tbody>
+</table>
+</script>
+<!-- END: Underscore Template Definition. -->
 <script src="https://apis.google.com/js/platform.js?onload=initClient" async defer></script>
 <script src="https://apis.google.com/js/client.js?onload=handleClientLoad" async defer></script>
 <script src="http://cdn.jsdelivr.net/alasql/0.2/alasql.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
