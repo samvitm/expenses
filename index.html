@@ -8,27 +8,37 @@
   <meta name="description" content="Expense manager by analysing emails">
   <meta name="google-signin-client_id" content="267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com">
   <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.0.25/css/bulma.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.0.26/css/bulma.min.css">
+  <script   src="https://code.jquery.com/jquery-2.2.3.min.js"   integrity="sha256-a23g1Nt4dtEYOj7bR+vTu7+T8VP13humZFBJNIYoEJo="   crossorigin="anonymous"></script>
 </head>
 
 <body class="layout-default page-layout">
 
-  <section class="hero is-bold is-info">
+  <section class="hero is-info is-bold">
   <!-- Hero header: will stick at the top -->
-  <div class="hero-header">
-    <header class="header">
+  <div class="hero-head">
+    <nav class="nav">
       <div class="container">
-        <div class="header-left">
-          <h1 class="header-item is-large">Expenses</h1>
+        <div class="nav-left">
+          <a class="nav-item" href="/">
+          </a>
         </div>
-        <span class="header-toggle">
+        <span class="nav-toggle" id="nav-toggle">
           <span></span>
           <span></span>
           <span></span>
         </span>
-        <div class="header-right header-menu">
-
-          <span class="header-item">
+        <div class="nav-right nav-menu" id="nav-menu">
+          <a class="nav-item is-active">
+            Home
+          </a>
+          <a class="nav-item" id='list-messages'>
+            List Messages
+          </a>
+          <a class="nav-item" onclick="signOut();">
+            Sign Out
+          </a>
+          <span class="nav-item">
             <a class="button is-primary is-inverted" id="my-signin2">
               <span class="icon">
                 <i class="fa fa-google"></i>
@@ -36,29 +46,19 @@
               <span>Sign in with Google</span>
             </a>
           </span>
-
-          <a class="header-item" id='list-messages'>
-            List Messages
-          </a>
-
-
-          <a class="header-item" onclick="signOut();">
-            Sign out
-          </a>
-
         </div>
       </div>
-    </header>
+    </nav>
   </div>
 
   <!-- Hero content: will be in the middle -->
-  <div class="hero-content">
+  <div class="hero-body">
     <div class="container">
       <h1 class="title">
         Expenses
       </h1>
       <h2 class="subtitle">
-        View CitiBank Expenses by reading Gmail
+        Analyze your expenses by parsing emails
       </h2>
     </div>
   </div>
@@ -67,8 +67,9 @@
 
   <section class="section">
     <div class="container">
-      <div class="columns is-mobile">
-        <div class="column is-2">
+      <div class="columns">
+
+        <div class="column is-2 is-narrow-mobile">
           <aside class="menu">
             <p class="menu-label">
               General
@@ -85,15 +86,17 @@
               <li><a href="#">Balance</a></li>
             </ul>
           </aside>
-
         </div>
+
         <div class="column">
           <div id="content">
             CONTENT
           </div>
         </div>
+
         <div class="column is-2">
           <div id="right-info">
+            RIGHT INFO
           </div>
         </div>
       </div>
@@ -172,7 +175,7 @@ function fetchMessageIds(query) {
             'userId': 'me',
             'pageToken': nextPageToken,
             'q': query,
-            maxResults:500,
+            maxResults:maxMessages,
           });
           console.log("Loading message",result.length);
           getPageOfMessages(request, result);
@@ -186,7 +189,7 @@ function fetchMessageIds(query) {
     var initialRequest = gapi.client.gmail.users.messages.list({
       'userId': 'me',
       'q': query,
-      maxResults: 500 //it seems thats the max limit
+      maxResults: maxMessages //it seems thats the max limit
     });
 
     getPageOfMessages(initialRequest, []);
@@ -274,7 +277,7 @@ var getMetaData = function(message){
     var name = h.name;
 
     if(name == "Date"){
-      metaData["date"] = new Date(h.value);
+      metaData["date"] = new Date(h.value).getTime();
     } else if (name == "Subject"){
       metaData["subject"] = h.value;
     }
@@ -317,32 +320,52 @@ var handleClientLoad = function(){
   gapi.client.load('gmail', 'v1');
 };
 
+// all tables must contain messageId and date timestamp
+var config = {
+  "citibank" : {
+    "credit" : {
+      "fields" : {
+        "amount" : {
+          "type" : "float",
+          "extractors" : ["/Rs\s*([0-9\,\.]+)\swas/"]
+        },
+        "merchant" : {
+          "type" : "string",
+          "extractors" : ["/at\s*(.*)/"]
+        }
+      },
+      "mainMessageExtractor" : "/bgcolor="#f1fcf9">(.*)/"
+    }
+  }
+}
+
 var initDB = function(){
   var db = new alasql.Database('expenses');
   //console.log(alasql.databases.expenses);
-  db.exec("create table transactions (id string, vdate Date, transactionString string, type string, merchant string, amount float)")
+  db.exec("create table transactions (id string, vdate int, transactionString string, type string, merchant string, amount float)")
 }
 
 var writeMessageToDB = function(message){
   var db = alasql.databases.expenses;
-  var insertQuery = "INSERT INTO transactions values(%id , %metaData.date, %extractedData.transactionString, %metaData.transactionType,%extractedData.merchant,%extractedData.amount)";
+  var insertQuery = 'INSERT INTO transactions values("%id" , "%metaData.date", "%extractedData.transactionString", "%metaData.transactionType","%extractedData.merchant",%extractedData.amount)';
   var finalQuery = parameterizedQuery(insertQuery,message);
   //console.log(finalQuery);
   db.exec(finalQuery);
 }
 
 var parameterizedQuery = function(query,obj){
-  var parameters = /%(.*?)[,\)\s*]/g;
+  console.log("query,",query,"obj:",obj)
+  var parameters = /%([a-zA-Z\.]+)/g;
   var found;
-  var newQuery = query;
+  var newQuery = query + " ";
   while ((found = parameters.exec(query)) !== null) {
-    //console.log("Found",found);
+    console.log("Found",found);
     var attr = found[1];
     var replace = getNestedAttrValue(obj,attr);
-    newQuery = newQuery.replace("%"+attr,'"'+replace+'"');
+    newQuery = newQuery.replace("%"+attr,replace);
 
   }
-  //console.log(newQuery);
+  console.log(newQuery);
   return newQuery;
 }
 
@@ -395,9 +418,10 @@ var renderExpensesTable = function(){
   var db = alasql.databases.expenses;
   var thisMonthTS = new Date('2016-01-01').getTime();
   var thisMonthCreditTransQuery = "SELECT * FROM transactions where type='credit' and vdate >= %date order by vdate desc";
-  var finalQuery = parameterizedQuery(thisMonthCreditTransQuery,{date:thisMonthTS});
-  var transactions = db.exec(finalQuery);
-  //localStorage.setItem('transactions',JSON.stringify(transactions));
+  var query = "select * from transactions order by vdate desc";
+  //var finalQuery = parameterizedQuery(thisMonthCreditTransQuery,{date:thisMonthTS});
+  var transactions = db.exec(query);
+  localStorage.setItem('transactions',JSON.stringify(transactions));
   //console.log("All transactions",transactions);
   var template = _.template(document.querySelector("#transaction-template").innerHTML);
   var contentDiv = document.querySelector("#content");
@@ -408,30 +432,53 @@ var renderExpensesTable = function(){
 var renderRightInfo = function(){
   console.log("Rendering right information");
   var db = alasql.databases.expenses;
-  var sumCredit = db.exec("select sum(amount) as totalSpend from transactions where type='credit'")[0];
+  var thisMonth = new Date('2016-05-01').getTime();
+  var query = "select sum(amount) as totalSpend from transactions where type='credit' and vdate>= %date";
+  var replacedQuery = parameterizedQuery(query,{date:thisMonth});
+  var sumCredit = db.exec(replacedQuery)[0];
   console.log(sumCredit);
   var node = document.querySelector("#right-info");
   node.innerHTML = "Total credit card spend: " + sumCredit.totalSpend;
 }
 
+var loadJsonToDb = function(data){
+  var db = alasql.databases.expenses;
+  db.tables.transactions.data = data;
+}
+
 
 document.addEventListener("DOMContentLoaded", function() {
   initDB();
+
+
+  var $toggle = $('#nav-toggle');
+  var $menu = $('#nav-menu');
+
+  $toggle.click(function() {
+    $(this).toggleClass('is-active');
+    $menu.toggleClass('is-active');
+  });
+
   var listMessagesElement = document.querySelector('#list-messages');
   listMessagesElement.addEventListener("click",function(){
     var emailQuery = "from:CitiAlert.India@citicorp.com";
-    //if(!localStorage.getItem('transactions')) {
+    var localData = localStorage.getItem('transactions');
+    //localData = false;
+    if(!localData) {
       fetchMessageIds(emailQuery)
       .then(fetchAllMessages)
       .then(processAllMessages)
       .then(renderExpensesTable)
       .then(renderRightInfo)
       .catch(rejectFn);
-    // } else {
-    //   console.log("Loading data from localStorage");
-    //   var transactions = JSON.parse(localStorage.getItem('transactions'));
-    //   console.log(transactions);
-    // }
+    } else {
+      console.log("Loading data from localStorage");
+      var transactions = JSON.parse(localStorage.getItem('transactions'));
+      loadJsonToDb(transactions);
+      //console.log(transactions);
+      renderExpensesTable();
+      renderRightInfo();
+    }
 
   });
 });
@@ -466,5 +513,5 @@ document.addEventListener("DOMContentLoaded", function() {
 <!-- END: Underscore Template Definition. -->
 <script src="https://apis.google.com/js/platform.js?onload=initClient" async defer></script>
 <script src="https://apis.google.com/js/client.js?onload=handleClientLoad" async defer></script>
-<script src="http://cdn.jsdelivr.net/alasql/0.2/alasql.min.js"></script>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/alasql/0.2.6/alasql.min.js"></script>
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
