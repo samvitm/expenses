@@ -110,6 +110,13 @@
 var googleAuthInstance = {};
 var maxMessages = 1000;
 
+// google sign in functions
+
+function handleClientLoad(){
+  console.log('loading gmail client')
+  gapi.client.load('gmail', 'v1');
+};
+
 function onSignIn(googleUser) {
   var profile = googleUser.getBasicProfile();
   console.log('ID: ' + profile.getId()); // Do not send to your backend! Use an ID token instead.
@@ -122,7 +129,7 @@ function onFailure(error) {
   console.log(error);
 }
 
-var initClient = function() {
+function initClient() {
   gapi.load('auth2', function(){
       googleAuthInstance = gapi.auth2.init({
           client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com',
@@ -139,6 +146,101 @@ function signOut() {
    });
  }
 
+ // end of google sign in functions
+
+
+// helper functions atomic in nature
+function rejectFn(reason){
+ console.log("Promise rejected due to ",reason);
+}
+
+function parameterizedQuery(query,obj){
+ console.log("received query : ",query,"obj: ",obj)
+ var parameters = /%([a-zA-Z\.]+)/g;
+ var found;
+ var newQuery = query + " ";
+ while ((found = parameters.exec(query)) !== null) {
+   var attr = found[1];
+   var replace = getNestedAttrValue(obj,attr);
+   newQuery = newQuery.replace("%"+attr,replace);
+ }
+ console.log("replaced query : ",newQuery);
+ return newQuery;
+}
+
+function getNestedAttrValue(obj,attr){
+ var value;
+ attr.split(".").reduce(function(pre,cur){
+   if(pre.hasOwnProperty(cur)){
+     value = pre[cur];
+   }
+   return value
+ },obj);
+ return value;
+}
+
+ // functions top to bottom based on flow
+
+function initDB(){
+ var db = new alasql.Database('expenses');
+}
+
+function createTables(bankName){
+ var db = alasql.databases.expenses;
+ var bankConfig = config[bankName];
+ _.each(bankConfig,function(transactionTypeConfig,transactionType){
+   var createStatement = "CREATE TABLE IF NOT EXISTS %tableName ( id string, date string, main_message string, %tableColumns )";
+   var tableName = bankName + "_" + transactionType;
+   var tableColumns = _.map(transactionTypeConfig["fields"],function(field){
+     return field["name"] + " " + field["type"];
+   }).join(", ")
+   var finalCreateStatement = parameterizedQuery(createStatement,{tableName:tableName,tableColumns:tableColumns});
+   db.exec(finalCreateStatement);
+ });
+}
+
+function fetchMessageIds(query) {
+ console.log("Fetching all message ids");
+ var promise = new Promise(function(resolve,reject){
+   function getPageOfMessages(request, result) {
+     request.then(function(resp) {
+       result = result.concat(resp.result.messages);
+       var nextPageToken = resp.result.nextPageToken;
+       nextPageToken = undefined; //stopping the next execution for testing
+       if (nextPageToken) {
+         request = gapi.client.gmail.users.messages.list({
+           'userId': 'me',
+           'pageToken': nextPageToken,
+           'q': query,
+           maxResults:maxMessages,
+         });
+         getPageOfMessages(request, result);
+       } else {
+         resolve(result);
+       }
+     },rejectFn);
+   };
+   var initialRequest = gapi.client.gmail.users.messages.list({
+     'userId': 'me',
+     'q': query,
+     maxResults: maxMessages //it seems thats the max limit
+   });
+   getPageOfMessages(initialRequest, []);
+ });
+ return promise;
+}
+
+function fetchAllMessages(messageIds){
+  console.log("Fetching all message content :");
+  var promises = []
+  messageIds.forEach(function(m){
+    console.log("Fetching message,",m.id);
+    var messagePromise = getMessage(m.id);
+    promises.push(messagePromise);
+  });
+  return promises;
+}
+
 function getMessage(messageId) {
   var request = gapi.client.gmail.users.messages.get({
     'userId': 'me',
@@ -147,61 +249,36 @@ function getMessage(messageId) {
   var promise = new Promise(function(resolve,reject){
       //console.log("Started fetch for message ",messageId);
       request.then(function(resp){
-        //console.log("Fetching message complete for messageid",messageId);
+        console.log("Fetching message complete for messageid",messageId);
         resolve(resp.result);
       },rejectFn);
   });
-
   return promise;
 }
 
-var rejectFn = function(reason){
-  console.log("Request rejected due to ",reason);
-}
 
-function fetchMessageIds(query) {
-  console.log("Fetching all message ids");
-
-  var promise = new Promise(function(resolve,reject){
-
-    var getPageOfMessages = function(request, result) {
-      request.then(function(resp) {
-        //console.log(resp);
-        result = result.concat(resp.result.messages);
-        var nextPageToken = resp.result.nextPageToken;
-        //nextPageToken = undefined; //stopping the next execution for testing
-        if (nextPageToken) {
-          request = gapi.client.gmail.users.messages.list({
-            'userId': 'me',
-            'pageToken': nextPageToken,
-            'q': query,
-            maxResults:maxMessages,
-          });
-          console.log("Loading message",result.length);
-          getPageOfMessages(request, result);
-        } else {
-          //console.log(result.length,result);
-          resolve(result);
-        }
-      },rejectFn);
-    };
-
-    var initialRequest = gapi.client.gmail.users.messages.list({
-      'userId': 'me',
-      'q': query,
-      maxResults: maxMessages //it seems thats the max limit
+function processAllMessages(allMessagesPromise,messageConfig){
+  var allMessagesProcessedPromise = [];
+  allMessagesPromise.forEach(function(messagePromise){
+    var promise = new Promise(function(resolve,reject){
+      messagePromise.then(function(m){
+        var message = readMessage(m,messageConfig);
+        resolve(message);
+      }).catch(rejectFn);
     });
-
-    getPageOfMessages(initialRequest, []);
-
+    allMessagesProcessedPromise.push(promise);
   });
-
-  return promise;
+  var wrapperPromise = new Promise(function(resolve,reject){
+    Promise.all(allMessagesProcessedPromise).then(function(values){
+      resolve(values);
+    }).catch(rejectFn)
+  });
+  return wrapperPromise;
 }
 
-var readMessage = function(message){
+function readMessage(message,messageConfig){
   var metaData = getMetaData(message);
-  var extractedData = extractData(message,metaData);
+  var extractedData = extractData(message,messageConfig);
   var messageObj = {
     metaData : metaData,
     extractedData : extractedData,
@@ -209,10 +286,9 @@ var readMessage = function(message){
     mimeType: message.payload.mimeType
   }
   return messageObj;
-
 }
 
-var getMessageHTML = function(message){
+function getMessageHTML(message){
   var messageBase64 ;
   if(message.payload.mimeType == "text/html"){
     messageBase64 = message.payload.body.data;
@@ -230,206 +306,126 @@ var getMessageHTML = function(message){
   return messageHTML;
 };
 
-var extractData = function(message,metaData){
+function extractData(message,messageConfig){
   //console.log("Extracting data out of message",message.id);
   var messageHTML = getMessageHTML(message);
-  var mainMessageRegex = /bgcolor="#f1fcf9">(.*)/;
-
-  if(metaData["transactionType"] == "withdrawal"){
-    mainMessageRegex = /(Rs.*)/;
-  } else if(metaData["transactionType"] == "debit_purchase"){
-    mainMessageRegex = /Your debit card(.*?)/
-  } else if(metaData["transactionType"] == "neft"){
-    mainMessageRegex = /You have received(.*?)/
-  }
-
-  var found = messageHTML.match(mainMessageRegex);
-  var match = "NO REGEX MATCH";
-  if (found){
-    match = found[1]
-  }
-
-  var amount=0,merchant="";
-
-  //get additional data out of matched string
-  if(metaData["transactionType"] == "credit" && found){
-    var amountRegex = /Rs\s*([0-9\,\.]+)\swas/;
-    amount = match.match(amountRegex)[1]
-    var merchantRegex = /at\s*(.*)/
-    merchant = match.match(merchantRegex)[1]
-    amount = amount.replace(/,/g,'');
-    //console.log(amount,merchant);
+  var mainMessageRegex = messageConfig["mainMessageExtractor"];
+  var matchObj = messageHTML.match(mainMessageRegex);
+  var foundText = "NO MAIN MESSAGE REGEX MATCH";
+  if (matchObj){
+    foundText = matchObj[1]
   }
 
   var data = {
     rawHtml : messageHTML,
-    transactionString : _.escape(match),
-    amount : parseFloat(amount),
-    merchant : merchant,
+    mainMessage : _.escape(foundText)
   }
+
+  _.each(messageConfig["fields"],function(field){
+    var regexExtractors = field["extractors"];
+    var attrName = field["name"];
+    var type = field["type"]
+    var text = foundText;
+    _.each(regexExtractors,function(regex){
+      var match = text.match(regex);
+      if(match){
+        text = match[1]
+      }
+    });
+    if(text == foundText){
+      text = "NO " + attrName.toUpperCase() + " MATCH FOUND";
+    }
+
+    if(type == "float"){
+      text = text.replace(/,/g,'');
+    } else if(type == "string"){
+      text = _.escape(text);
+    }
+    data[attrName] = text;
+  });
+  console.log("Extracted data : ",data);
   return data;
 };
 
-var getMetaData = function(message){
+function getMetaData(message){
   var headers = message.payload.headers;
   var metaData = {};
   headers.forEach(function(h){
     var name = h.name;
-
     if(name == "Date"){
       metaData["date"] = new Date(h.value).getTime();
     } else if (name == "Subject"){
       metaData["subject"] = h.value;
     }
   });
-
-  if(metaData["subject"].indexOf("Transaction confirmation on your Citibank credit card") > -1){
-    metaData["transactionType"] = "credit";
-  } else if (metaData["subject"].indexOf("Confirmation of transaction on your Citibank Debit Card") > -1){
-    metaData["transactionType"] = "debit";
-    console.log(metaData["subject"],'debit')
-  } else if (metaData["subject"].indexOf("Balance in your account") > -1){
-    metaData["transactionType"] = "balance";
-  } else if (metaData["subject"].indexOf("ATM Withdrawal Alert") > -1){
-    metaData["transactionType"] = "withdrawal";
-  } else if (metaData["subject"].indexOf("Transaction confirmation on your Citibank Credit Card") > -1){
-    metaData["transactionType"] = "credit_fx";
-  } else if (metaData["subject"].indexOf("New Payee addition on Citibank Online") > -1){
-    metaData["transactionType"] = "payee_add";
-  } else if (metaData["subject"].indexOf("CitiAlert - Confirmation of Credit Card Bill Payment") > -1){
-    metaData["transactionType"] = "bill_pay";
-  } else if (metaData["subject"].indexOf("CitiAlert - Credit Card Payment Due Date Reminder") > -1){
-    metaData["transactionType"] = "due_date";
-  } else if (metaData["subject"].indexOf("NEFT Fund Transfer acknowledgement") > -1){
-    metaData["transactionType"] = "neft";
-  }else if (metaData["subject"].indexOf("CitiAlert - Credit Card Mini Statement") > -1){
-    metaData["transactionType"] = "mini_statement";
-  }else if (metaData["subject"].indexOf("CitiAlert - Reward Redemption") > -1){
-    metaData["transactionType"] = "reward_redemption";
-  }else if (metaData["subject"].indexOf("Citi Purchase Alert") > -1){
-    metaData["transactionType"] = "debit_purchase";
-    console.log(metaData["subject"],'debit puchase')
-  }else {
-    metaData["transactionType"] = metaData["subject"];
-  }
   return metaData;
 };
 
-var handleClientLoad = function(){
-  console.log('loading gmail client')
-  gapi.client.load('gmail', 'v1');
-};
+//TODO - instead of values explicitly mention fields so that order is not effected
+function writeMessagesToDB(messages,tableName,messageConfig){
+ var db = alasql.databases.expenses;
+ var insertQuery = "INSERT INTO %tableName values ( '%id', '%date', '%mainMessage', '%otherColumns')";
+ var promise = new Promise(function(resolve,reject){
+   _.each(messages,function(message){
+     console.log("inserting message ", message);
+     var dataValues = _.map(messageConfig["fields"],function(field){
+       var fieldName = field["name"]
+       return message["extractedData"][fieldName]
+     }).join("', '")
+     var finalQuery = parameterizedQuery(insertQuery,{
+       tableName:tableName,
+       mainMessage : message["extractedData"]["mainMessage"],
+       id:message["id"],
+       date:message["metaData"]["date"],
+       otherColumns: dataValues
+     });
+     db.exec(finalQuery);
+   });
+   resolve("Done inserting messages");
+ });
+ return promise;
+}
 
 // all tables must contain messageId and date timestamp
+// escape all '\' in regex eg. '\s' => '\\s'
 var config = {
   "citibank" : {
     "credit" : {
-      "fields" : {
-        "amount" : {
+      "query" : "from:CitiAlert.India@citicorp.com subject:'Transaction confirmation on your Citibank credit card'",
+      "mainMessageExtractor" : 'bgcolor="#f1fcf9">(.*)',
+      "fields" : [
+        { "name" : "amount",
           "type" : "float",
-          "extractors" : ["/Rs\s*([0-9\,\.]+)\swas/"]
+          "extractors" : ["Rs\\s*([0-9\\,\\.]+)\\swas"]
         },
-        "merchant" : {
+        { "name" : "merchant",
           "type" : "string",
-          "extractors" : ["/at\s*(.*)/"]
+          "extractors" : ["at\\s*(.*)"]
         }
-      },
-      "mainMessageExtractor" : "/bgcolor="#f1fcf9">(.*)/"
+      ]
     }
   }
 }
 
-var initDB = function(){
-  var db = new alasql.Database('expenses');
-  //console.log(alasql.databases.expenses);
-  db.exec("create table transactions (id string, vdate int, transactionString string, type string, merchant string, amount float)")
-}
-
-var writeMessageToDB = function(message){
-  var db = alasql.databases.expenses;
-  var insertQuery = 'INSERT INTO transactions values("%id" , "%metaData.date", "%extractedData.transactionString", "%metaData.transactionType","%extractedData.merchant",%extractedData.amount)';
-  var finalQuery = parameterizedQuery(insertQuery,message);
-  //console.log(finalQuery);
-  db.exec(finalQuery);
-}
-
-var parameterizedQuery = function(query,obj){
-  console.log("query,",query,"obj:",obj)
-  var parameters = /%([a-zA-Z\.]+)/g;
-  var found;
-  var newQuery = query + " ";
-  while ((found = parameters.exec(query)) !== null) {
-    console.log("Found",found);
-    var attr = found[1];
-    var replace = getNestedAttrValue(obj,attr);
-    newQuery = newQuery.replace("%"+attr,replace);
-
-  }
-  console.log(newQuery);
-  return newQuery;
-}
-
-var getNestedAttrValue = function(obj,attr){
-  var value;
-  attr.split(".").reduce(function(pre,cur){
-    if(pre.hasOwnProperty(cur)){
-      value = pre[cur];
-    }
-    return value
-  },obj);
-  return value;
-}
-
-var fetchAllMessages = function(messageIds){
-  console.log("Fetching all message content :");
-  var promises = []
-  messageIds.forEach(function(m){
-    //console.log("Fetching message,",m.id);
-    var messagePromise = getMessage(m.id);
-    promises.push(messagePromise);
-  });
-  return promises;
-}
-
-var processAllMessages = function(allMessagesPromise){
-  var allMessagesProcessedPromise = [];
-  allMessagesPromise.forEach(function(messagePromise){
-    var promise = new Promise(function(resolve,reject){
-      messagePromise.then(function(m){
-        var message = readMessage(m);
-        //console.log(message);
-        writeMessageToDB(message);
-        resolve(message);
-      }).catch(rejectFn);
-    });
-    allMessagesProcessedPromise.push(promise);
-  });
-  var wrapperPromise = new Promise(function(resolve,reject){
-    Promise.all(allMessagesProcessedPromise).then(function(values){
-      resolve(values);
-    }).catch(rejectFn)
-  });
-  return wrapperPromise;
-}
 
 
-var renderExpensesTable = function(){
+
+
+function renderExpensesTable(promiseValue,tableName,messageConfig){
   console.log("Rendering Expenses table");
   var db = alasql.databases.expenses;
-  var thisMonthTS = new Date('2016-01-01').getTime();
-  var thisMonthCreditTransQuery = "SELECT * FROM transactions where type='credit' and vdate >= %date order by vdate desc";
-  var query = "select * from transactions order by vdate desc";
-  //var finalQuery = parameterizedQuery(thisMonthCreditTransQuery,{date:thisMonthTS});
-  var transactions = db.exec(query);
-  localStorage.setItem('transactions',JSON.stringify(transactions));
-  //console.log("All transactions",transactions);
+
+  var query = "SELECT * FROM %tableName order by date desc";
+  var finalQuery = parameterizedQuery(query,{tableName:tableName});
+  var transactions = db.exec(finalQuery);
+
   var template = _.template(document.querySelector("#transaction-template").innerHTML);
   var contentDiv = document.querySelector("#content");
-  var tableHTML = template({transactions: transactions});
+  var tableHTML = template({transactions: transactions,tableName:tableName});
   contentDiv.innerHTML = tableHTML;
 }
 
-var renderRightInfo = function(){
+function renderRightInfo(){
   console.log("Rendering right information");
   var db = alasql.databases.expenses;
   var thisMonth = new Date('2016-05-01').getTime();
@@ -441,16 +437,16 @@ var renderRightInfo = function(){
   node.innerHTML = "Total credit card spend: " + sumCredit.totalSpend;
 }
 
-var loadJsonToDb = function(data){
+function loadJsonToDb(data){
   var db = alasql.databases.expenses;
   db.tables.transactions.data = data;
 }
 
 
+
 document.addEventListener("DOMContentLoaded", function() {
+
   initDB();
-
-
   var $toggle = $('#nav-toggle');
   var $menu = $('#nav-menu');
 
@@ -461,25 +457,23 @@ document.addEventListener("DOMContentLoaded", function() {
 
   var listMessagesElement = document.querySelector('#list-messages');
   listMessagesElement.addEventListener("click",function(){
-    var emailQuery = "from:CitiAlert.India@citicorp.com";
-    var localData = localStorage.getItem('transactions');
-    //localData = false;
-    if(!localData) {
-      fetchMessageIds(emailQuery)
-      .then(fetchAllMessages)
-      .then(processAllMessages)
-      .then(renderExpensesTable)
-      .then(renderRightInfo)
-      .catch(rejectFn);
-    } else {
-      console.log("Loading data from localStorage");
-      var transactions = JSON.parse(localStorage.getItem('transactions'));
-      loadJsonToDb(transactions);
-      //console.log(transactions);
-      renderExpensesTable();
-      renderRightInfo();
-    }
+    var selectedBanks = ["citibank"];
+    _.each(selectedBanks,function(bankName){
+      var bankConfig = config[bankName];
+      createTables(bankName);
+      //process each message type
+      _.each(bankConfig,function(transactionTypeConfig,transactionType){
+        var query = transactionTypeConfig["query"];
+        var tableName = bankName + "_" + transactionType
+        fetchMessageIds(query)
+        .then(fetchAllMessages)
+        .then(_.bind(processAllMessages,null,_,transactionTypeConfig))
+        .then(_.bind(writeMessagesToDB,null,_,tableName,transactionTypeConfig))
+        .then(_.bind(renderExpensesTable,null,_,tableName,transactionTypeConfig))
 
+      })
+
+    });
   });
 });
 
@@ -487,12 +481,12 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 <!-- BEGIN: Underscore Template Definition. -->
 <script type="text/template" class="templates" id="transaction-template">
+<h2>Reder table : <%= tableName %></h2>
 <table class="table">
   <thead>
     <tr>
       <th>Date</th>
       <th>Transaction</th>
-      <th>Type</th>
       <th>Merchant</th>
       <th>Amount</th>
     </tr>
@@ -500,9 +494,8 @@ document.addEventListener("DOMContentLoaded", function() {
   <tbody>
     <% _.each(transactions,function(t){ %>
       <tr>
-        <td><%= t.vdate %></td>
-        <td><%= _.unescape(t.transactionString) %></td>
-        <td><%= t.type %> </td>
+        <td><%= t.date %></td>
+        <td><%= _.unescape(t.main_message) %></td>
         <td><%= t.merchant %> </td>
         <td><%= t.amount %> </td>
       </tr>
@@ -514,4 +507,4 @@ document.addEventListener("DOMContentLoaded", function() {
 <script src="https://apis.google.com/js/platform.js?onload=initClient" async defer></script>
 <script src="https://apis.google.com/js/client.js?onload=handleClientLoad" async defer></script>
 <script type="text/javascript" src="https://cdn.jsdelivr.net/alasql/0.2.6/alasql.min.js"></script>
-<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/lodash/4.12.0/lodash.min.js"></script>
