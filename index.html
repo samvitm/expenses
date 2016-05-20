@@ -155,7 +155,7 @@ function rejectFn(reason){
 }
 
 function parameterizedQuery(query,obj){
- console.log("received query : ",query,"obj: ",obj)
+ //console.log("received query : ",query,"obj: ",obj)
  var parameters = /%([a-zA-Z\.]+)/g;
  var found;
  var newQuery = query + " ";
@@ -164,7 +164,7 @@ function parameterizedQuery(query,obj){
    var replace = getNestedAttrValue(obj,attr);
    newQuery = newQuery.replace("%"+attr,replace);
  }
- console.log("replaced query : ",newQuery);
+ //console.log("replaced query : ",newQuery);
  return newQuery;
 }
 
@@ -177,6 +177,10 @@ function getNestedAttrValue(obj,attr){
    return value
  },obj);
  return value;
+}
+
+function updateStatus(message){
+  document.querySelector("#right-info").innerHTML = message;
 }
 
  // functions top to bottom based on flow
@@ -200,7 +204,7 @@ function createTables(bankName){
 }
 
 function fetchMessageIds(query) {
- console.log("Fetching all message ids");
+ updateStatus("Fetching all message ids");
  var promise = new Promise(function(resolve,reject){
    function getPageOfMessages(request, result) {
      request.then(function(resp) {
@@ -231,10 +235,10 @@ function fetchMessageIds(query) {
 }
 
 function fetchAllMessages(messageIds){
-  console.log("Fetching all message content :");
+  updateStatus("Fetching all message content");
   var promises = []
   messageIds.forEach(function(m){
-    console.log("Fetching message,",m.id);
+    updateStatus("Fetching message : " + m.id);
     var messagePromise = getMessage(m.id);
     promises.push(messagePromise);
   });
@@ -249,7 +253,7 @@ function getMessage(messageId) {
   var promise = new Promise(function(resolve,reject){
       //console.log("Started fetch for message ",messageId);
       request.then(function(resp){
-        console.log("Fetching message complete for messageid",messageId);
+        updateStatus("Fetching message complete for messageid : " + messageId);
         resolve(resp.result);
       },rejectFn);
   });
@@ -307,7 +311,7 @@ function getMessageHTML(message){
 };
 
 function extractData(message,messageConfig){
-  //console.log("Extracting data out of message",message.id);
+  updateStatus("Extracting data out of message " + message.id);
   var messageHTML = getMessageHTML(message);
   var mainMessageRegex = messageConfig["mainMessageExtractor"];
   var matchObj = messageHTML.match(mainMessageRegex);
@@ -365,9 +369,10 @@ function getMetaData(message){
 function writeMessagesToDB(messages,tableName,messageConfig){
  var db = alasql.databases.expenses;
  var insertQuery = "INSERT INTO %tableName values ( '%id', '%date', '%mainMessage', '%otherColumns')";
+ updateStatus("WRITING MESSAGES TO DB");
  var promise = new Promise(function(resolve,reject){
    _.each(messages,function(message){
-     console.log("inserting message ", message);
+     updateStatus("inserting message ", message);
      var dataValues = _.map(messageConfig["fields"],function(field){
        var fieldName = field["name"]
        return message["extractedData"][fieldName]
@@ -412,7 +417,7 @@ var config = {
 
 
 function renderExpensesTable(promiseValue,tableName,messageConfig){
-  console.log("Rendering Expenses table");
+  updateStatus("Rendering Expenses table");
   var db = alasql.databases.expenses;
 
   var query = "SELECT * FROM %tableName order by date desc";
