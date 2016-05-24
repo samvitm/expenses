@@ -251,7 +251,7 @@ function getMessage(messageId) {
     'id': messageId
   });
   var promise = new Promise(function(resolve,reject){
-      //console.log("Started fetch for message ",messageId);
+      updateStatus("Downloading message " +  messageId);
       request.then(function(resp){
         updateStatus("Fetching message complete for messageid : " + messageId);
         resolve(resp.result);
@@ -401,7 +401,7 @@ var config = {
       "fields" : [
         { "name" : "amount",
           "type" : "float",
-          "extractors" : ["Rs\\s*([0-9\\,\\.]+)\\swas"]
+          "extractors" : ["\\s*([0-9\\,\\.]+)[\\sA-Z]+was"]
         },
         { "name" : "merchant",
           "type" : "string",
@@ -486,7 +486,7 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 <!-- BEGIN: Underscore Template Definition. -->
 <script type="text/template" class="templates" id="transaction-template">
-<h2>Reder table : <%= tableName %></h2>
+<h2>Rendering table : <%= tableName %></h2>
 <table class="table">
   <thead>
     <tr>
