@@ -10,6 +10,11 @@
   <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.0.26/css/bulma.min.css">
   <script   src="https://code.jquery.com/jquery-2.2.3.min.js"   integrity="sha256-a23g1Nt4dtEYOj7bR+vTu7+T8VP13humZFBJNIYoEJo="   crossorigin="anonymous"></script>
+  <style>
+    .hidden{
+      display: none;
+    }
+  </style>
 </head>
 
 <body class="layout-default page-layout">
@@ -65,43 +70,68 @@
 
 </section>
 
-  <section class="section">
-    <div class="container">
-      <div class="columns">
+<section class="section">
+  <div class="container">
+    <div class="columns">
 
-        <div class="column is-2 is-narrow-mobile">
-          <aside class="menu">
-            <p class="menu-label">
-              General
-            </p>
-            <ul class="menu-list">
-              <li><a href="#">Dashboard</a></li>
-            </ul>
-            <p class="menu-label">
-              Transactions
-            </p>
-            <ul class="menu-list">
-              <li><a href="#">Credit</a></li>
-              <li><a href="#">Debit</a></li>
-              <li><a href="#">Balance</a></li>
-            </ul>
-          </aside>
+      <div class="column is-2 is-narrow-mobile">
+        <aside class="menu">
+          <p class="menu-label">
+            General
+          </p>
+          <ul class="menu-list">
+            <li><a href="#">Dashboard</a></li>
+          </ul>
+          <p class="menu-label">
+            Transactions
+          </p>
+          <ul class="menu-list">
+            <li><a href="#">Credit</a></li>
+            <li><a href="#">Debit</a></li>
+            <li><a href="#">Balance</a></li>
+          </ul>
+        </aside>
+      </div>
+
+      <div class="column">
+        <div id="content">
+          CONTENT
         </div>
+      </div>
 
-        <div class="column">
-          <div id="content">
-            CONTENT
-          </div>
-        </div>
-
-        <div class="column is-2">
-          <div id="right-info">
-            RIGHT INFO
-          </div>
+      <div class="column is-2">
+        <div id="right-info">
+          RIGHT INFO
         </div>
       </div>
     </div>
-  </section>
+  </div>
+</section>
+
+<div class="modal" id="status-modal">
+  <div class="modal-background"></div>
+  <div class="modal-container">
+    <div class="modal-content">
+      <!-- Any other Bulma elements you want -->
+        <section class="box is-outlined">
+          <!-- Content ... -->
+          <div id="status-text" class="has-text-centered">
+            DEMO TEXT
+          </div>
+          <br>
+
+          <div id="status-working" class="hidden has-text-centered">
+            <i class="fa fa-cog fa-spin fa-3x fa-fw"></i>
+          </div>
+          <br>
+          <div id="status-progress-div" class="hidden">
+            <progress class="progress is-success" id="status-progress" value="0" max="100"></progress>
+          </div>
+        </section>
+
+    </div>
+  </div>
+</div>
 
 </body>
 
@@ -179,9 +209,44 @@ function getNestedAttrValue(obj,attr){
  return value;
 }
 
-function updateStatus(message){
-  document.querySelector("#right-info").innerHTML = message;
+
+function activateModal(){
+  $("#status-modal").addClass("is-active");
 }
+
+function updateStatus(message){
+  $("#status-text").html(message);
+}
+
+function deactivateModal(){
+  $("#status-modal").removeClass("is-active");
+}
+
+function updateProgress(percentage){
+  $("#status-progress").attr("value",percentage);
+}
+
+function showWorking(){
+  $("#status-working").show()
+}
+
+function hideWorking(){
+  $("#status-working").hide()
+}
+
+function showProgress(){
+  $("#status-progress-div").show();
+}
+
+function hideProgress(){
+  $("#status-progress-div").hide();
+}
+
+function formatDate(timestamp){
+  var d = new Date(parseInt(timestamp));
+  return d.toDateString();
+}
+
 
  // functions top to bottom based on flow
 
@@ -204,7 +269,6 @@ function createTables(bankName){
 }
 
 function fetchMessageIds(query) {
- updateStatus("Fetching all message ids");
  var promise = new Promise(function(resolve,reject){
    function getPageOfMessages(request, result) {
      request.then(function(resp) {
@@ -234,50 +298,23 @@ function fetchMessageIds(query) {
  return promise;
 }
 
-function fetchAllMessages(messageIds){
-  updateStatus("Fetching all message content");
-  var promises = []
-  messageIds.forEach(function(m){
-    updateStatus("Fetching message : " + m.id);
-    var messagePromise = getMessage(m.id);
-    promises.push(messagePromise);
-  });
-  return promises;
-}
-
 function getMessage(messageId) {
   var request = gapi.client.gmail.users.messages.get({
     'userId': 'me',
-    'id': messageId
+    'id': messageId.id
   });
   var promise = new Promise(function(resolve,reject){
-      updateStatus("Downloading message " +  messageId);
       request.then(function(resp){
-        updateStatus("Fetching message complete for messageid : " + messageId);
+        //updateStatus("Fetching message complete for messageid : " + messageId.id);
         resolve(resp.result);
       },rejectFn);
   });
   return promise;
 }
 
-
-function processAllMessages(allMessagesPromise,messageConfig){
-  var allMessagesProcessedPromise = [];
-  allMessagesPromise.forEach(function(messagePromise){
-    var promise = new Promise(function(resolve,reject){
-      messagePromise.then(function(m){
-        var message = readMessage(m,messageConfig);
-        resolve(message);
-      }).catch(rejectFn);
-    });
-    allMessagesProcessedPromise.push(promise);
-  });
-  var wrapperPromise = new Promise(function(resolve,reject){
-    Promise.all(allMessagesProcessedPromise).then(function(values){
-      resolve(values);
-    }).catch(rejectFn)
-  });
-  return wrapperPromise;
+function processMessage(message,tableName,transactionTypeConfig){
+  var messageData = readMessage(message,transactionTypeConfig);
+  writeMessageToDB(messageData,tableName,transactionTypeConfig);
 }
 
 function readMessage(message,messageConfig){
@@ -311,7 +348,7 @@ function getMessageHTML(message){
 };
 
 function extractData(message,messageConfig){
-  updateStatus("Extracting data out of message " + message.id);
+  //updateStatus("Extracting data out of message " + message.id);
   var messageHTML = getMessageHTML(message);
   var mainMessageRegex = messageConfig["mainMessageExtractor"];
   var matchObj = messageHTML.match(mainMessageRegex);
@@ -347,7 +384,7 @@ function extractData(message,messageConfig){
     }
     data[attrName] = text;
   });
-  console.log("Extracted data : ",data);
+  //console.log("Extracted data : ",data);
   return data;
 };
 
@@ -366,29 +403,22 @@ function getMetaData(message){
 };
 
 //TODO - instead of values explicitly mention fields so that order is not effected
-function writeMessagesToDB(messages,tableName,messageConfig){
- var db = alasql.databases.expenses;
- var insertQuery = "INSERT INTO %tableName values ( '%id', '%date', '%mainMessage', '%otherColumns')";
- updateStatus("WRITING MESSAGES TO DB");
- var promise = new Promise(function(resolve,reject){
-   _.each(messages,function(message){
-     updateStatus("inserting message ", message);
-     var dataValues = _.map(messageConfig["fields"],function(field){
-       var fieldName = field["name"]
-       return message["extractedData"][fieldName]
-     }).join("', '")
-     var finalQuery = parameterizedQuery(insertQuery,{
-       tableName:tableName,
-       mainMessage : message["extractedData"]["mainMessage"],
-       id:message["id"],
-       date:message["metaData"]["date"],
-       otherColumns: dataValues
-     });
-     db.exec(finalQuery);
-   });
-   resolve("Done inserting messages");
- });
- return promise;
+function writeMessageToDB(message,tableName,messageConfig){
+  var db = alasql.databases.expenses;
+  var insertQuery = "INSERT INTO %tableName values ( '%id', '%date', '%mainMessage', '%otherColumns')";
+  //updateStatus("inserting message ", message);
+  var dataValues = _.map(messageConfig["fields"],function(field){
+   var fieldName = field["name"]
+   return message["extractedData"][fieldName]
+  }).join("', '")
+  var finalQuery = parameterizedQuery(insertQuery,{
+   tableName:tableName,
+   mainMessage : message["extractedData"]["mainMessage"],
+   id:message["id"],
+   date:message["metaData"]["date"],
+   otherColumns: dataValues
+  });
+  db.exec(finalQuery);
 }
 
 // all tables must contain messageId and date timestamp
@@ -412,11 +442,7 @@ var config = {
   }
 }
 
-
-
-
-
-function renderExpensesTable(promiseValue,tableName,messageConfig){
+function renderExpensesTable(tableName,transactionTypeConfig){
   updateStatus("Rendering Expenses table");
   var db = alasql.databases.expenses;
 
@@ -426,7 +452,7 @@ function renderExpensesTable(promiseValue,tableName,messageConfig){
 
   var template = _.template(document.querySelector("#transaction-template").innerHTML);
   var contentDiv = document.querySelector("#content");
-  var tableHTML = template({transactions: transactions,tableName:tableName});
+  var tableHTML = template({transactions: transactions,tableName:tableName,fields:transactionTypeConfig.fields});
   contentDiv.innerHTML = tableHTML;
 }
 
@@ -469,15 +495,43 @@ document.addEventListener("DOMContentLoaded", function() {
       //process each message type
       _.each(bankConfig,function(transactionTypeConfig,transactionType){
         var query = transactionTypeConfig["query"];
-        var tableName = bankName + "_" + transactionType
-        fetchMessageIds(query)
-        .then(fetchAllMessages)
-        .then(_.bind(processAllMessages,null,_,transactionTypeConfig))
-        .then(_.bind(writeMessagesToDB,null,_,tableName,transactionTypeConfig))
-        .then(_.bind(renderExpensesTable,null,_,tableName,transactionTypeConfig))
+        var tableName = bankName + "_" + transactionType;
+        var doneProcessingMessages = $.Deferred();
 
-      })
+        activateModal();
+        showWorking();
+        updateStatus("Fetching messages for " + bankName.toUpperCase() + " " + transactionType.toUpperCase());
+        fetchMessageIds(query).then(function(messageIds){
+          var success = 0, failed = 0;
+          var total = messageIds.length;
+          updateStatus("Total messages found : " + total +  ". Requesting data ..");
+          _.each(messageIds,function(mid){
+            getMessage(mid).then(function(messageData){
+              processMessage(messageData,tableName,transactionTypeConfig);
+              updateStatus("Processed Email " + messageData.id);
+              success += 1;
+              updateProgress((success+failed)*100/total);
+              if(success + failed == total){
+                doneProcessingMessages.resolve();
+              }
+            }).catch(function(err){
+              updateStatus("Processed Failed for Email -  " + err);
+              failed += 1;
+              if(success + failed == total){
+                doneProcessingMessages.resolve();
+              }
+            });
+          });
+          hideWorking();
+          showProgress();
+        });
 
+        $.when(doneProcessingMessages).then(function(){
+          renderExpensesTable(tableName,transactionTypeConfig);
+          deactivateModal();
+        })
+
+      });
     });
   });
 });
@@ -492,17 +546,19 @@ document.addEventListener("DOMContentLoaded", function() {
     <tr>
       <th>Date</th>
       <th>Transaction</th>
-      <th>Merchant</th>
-      <th>Amount</th>
+      <% _.each(fields,function(f){ %>
+        <th> <%= f.name %></th>
+      <% }); %>
     </tr>
   </thead>
   <tbody>
     <% _.each(transactions,function(t){ %>
       <tr>
-        <td><%= t.date %></td>
+        <td><%= formatDate(t.date) %></td>
         <td><%= _.unescape(t.main_message) %></td>
-        <td><%= t.merchant %> </td>
-        <td><%= t.amount %> </td>
+        <% _.each(fields,function(f){ %>
+            <td><%= t[f.name] %></td>
+        <% }); %>
       </tr>
     <% }); %>
   </tbody>
