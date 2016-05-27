@@ -136,7 +136,7 @@
 
       <div class="column is-2">
         <div id="right-info">
-        
+
         </div>
       </div>
     </div>
@@ -591,6 +591,7 @@ function initApplication(){
           }).catch(function(err){
             updateStatus("Processed Failed for Email -  " + err);
             failed += 1;
+            updateProgress((success+failed)*100/total);
             if(success + failed == total){
               doneProcessingMessages.resolve();
             }
