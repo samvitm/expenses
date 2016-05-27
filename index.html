@@ -21,10 +21,40 @@
       -o-transition: all 1.5s ease;
       transition: all 1.5s ease;
     }
+
+    .pdr1{
+      padding-right: 1rem;
+    }
   </style>
 </head>
 
 <body class="layout-default page-layout">
+
+  <div class="modal is-active" id="status-modal">
+    <div class="modal-background"></div>
+    <div class="modal-container">
+      <div class="modal-content">
+        <!-- Any other Bulma elements you want -->
+          <section class="box is-outlined">
+            <!-- Content ... -->
+            <div id="status-text" class="has-text-centered">
+              Loading Application
+            </div>
+            <br>
+
+            <div id="status-working" class="has-text-centered">
+              <i class="fa fa-cog fa-spin fa-3x fa-fw"></i>
+            </div>
+            <br>
+            <div id="status-progress-div" class="hidden">
+              <progress class="progress is-success" id="status-progress" value="0" max="100"></progress>
+            </div>
+          </section>
+
+      </div>
+    </div>
+  </div>
+
 
   <section class="hero is-info is-bold is-large animated" id="hero-section">
   <!-- Hero header: will stick at the top -->
@@ -41,6 +71,10 @@
           <span></span>
         </span>
         <div class="nav-right nav-menu" id="nav-menu">
+          <a class="nav-item" id="user-info">
+            <span class="pdr1"></span>
+            <img src="" width="24"/>
+          </a>
           <a class="nav-item hidden" onclick="signOut();" id="signout-button">
             Sign Out
           </a>
@@ -96,13 +130,13 @@
 
       <div class="column">
         <div id="content">
-          CONTENT
+
         </div>
       </div>
 
       <div class="column is-2">
         <div id="right-info">
-          RIGHT INFO
+        
         </div>
       </div>
     </div>
@@ -124,44 +158,20 @@
     </div>
   </div>
 </footer>
-
-<div class="modal" id="status-modal">
-  <div class="modal-background"></div>
-  <div class="modal-container">
-    <div class="modal-content">
-      <!-- Any other Bulma elements you want -->
-        <section class="box is-outlined">
-          <!-- Content ... -->
-          <div id="status-text" class="has-text-centered">
-            DEMO TEXT
-          </div>
-          <br>
-
-          <div id="status-working" class="hidden has-text-centered">
-            <i class="fa fa-cog fa-spin fa-3x fa-fw"></i>
-          </div>
-          <br>
-          <div id="status-progress-div" class="hidden">
-            <progress class="progress is-success" id="status-progress" value="0" max="100"></progress>
-          </div>
-        </section>
-
-    </div>
-  </div>
-</div>
-
 </body>
 
 <script type="text/javascript">
 
 var googleAuthInstance = {};
-var maxMessages = 20;
+var maxMessages = 500;
+var gmailClientLoaded = $.Deferred();
 
 // google sign in functions
 
 function handleClientLoad(){
-  console.log('loading gmail client')
-  gapi.client.load('gmail', 'v1');
+  gapi.client.load('gmail', 'v1',function(){
+    gmailClientLoaded.resolve();
+  });
 };
 
 function onSignIn(googleUser) {
@@ -178,12 +188,23 @@ function onFailure(error) {
 
 function initClient() {
   gapi.load('auth2', function(){
-    googleAuthInstance = gapi.auth2.init({
+    gapi.auth2.init({
         client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com',
         scope: 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
+    }).then(function(){
+
+      googleAuthInstance = gapi.auth2.getAuthInstance();
+      var isLoggedIn = googleAuthInstance.isSignedIn.get();
+      if(!isLoggedIn){
+        console.log("User seems to be signed out")
+        isSignedOut();
+      } else {
+        isSignedIn();
+      }
+      googleAuthInstance.isSignedIn.listen(checkSignIn);
+      googleAuthInstance.attachClickHandler('google-signin-button', {}, onSignIn, onFailure);
+
     });
-    googleAuthInstance.isSignedIn.listen(checkSignIn);
-    googleAuthInstance.attachClickHandler('google-signin-button', {}, onSignIn, onFailure);
   });
 };
 
@@ -202,15 +223,24 @@ function checkSignIn(isLoggedIn){
 }
 
 function isSignedIn(){
+  var currentUserProfile = googleAuthInstance.currentUser.get().getBasicProfile();;
+  updateStatus("Welcome, " + currentUserProfile.getName());
+
+  $("#user-info span").html(currentUserProfile.getName());
+  $("#user-info img").attr("src",currentUserProfile.getImageUrl());
+
   $("#signout-button").removeClass("hidden");
   $("#hero-section").removeClass("is-large");
   $("#main-section").removeClass("hidden");
   $("#google-signin-button").addClass("hidden");
-  deactivateModal();
-  initApplication();
+  $.when(gmailClientLoaded).then(function(){
+    deactivateModal();
+    initApplication();
+  });
 }
 
 function isSignedOut(){
+  $("#user-info").addClass("hidden")
   $("#signout-button").addClass("hidden");
   $("#main-section").addClass("hidden");
   $("#hero-section").addClass("is-large");
@@ -315,7 +345,7 @@ function createTables(bankName){
  var db = alasql.databases.expenses;
  var bankConfig = config[bankName];
  _.each(bankConfig,function(transactionTypeConfig,transactionType){
-   var createStatement = "CREATE TABLE IF NOT EXISTS %tableName ( id string, date string, main_message string, %tableColumns )";
+   var createStatement = "CREATE TABLE IF NOT EXISTS %tableName ( id string, date string, main_message string, %tableColumns, UNIQUE(id)  )";
    var tableName = bankName + "_" + transactionType;
    var tableColumns = _.map(transactionTypeConfig["fields"],function(field){
      return field["name"] + " " + field["type"];
@@ -331,7 +361,7 @@ function fetchMessageIds(query) {
      request.then(function(resp) {
        result = result.concat(resp.result.messages);
        var nextPageToken = resp.result.nextPageToken;
-       nextPageToken = undefined; //stopping the next execution for testing
+       //nextPageToken = undefined; //stopping the next execution for testing
        if (nextPageToken) {
          request = gapi.client.gmail.users.messages.list({
            'userId': 'me',
@@ -532,6 +562,7 @@ function loadJsonToDb(data){
 
 
 function initApplication(){
+
   var selectedBanks = ["citibank"];
   _.each(selectedBanks,function(bankName){
     var bankConfig = config[bankName];
