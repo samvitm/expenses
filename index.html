@@ -14,12 +14,19 @@
     .hidden{
       display: none;
     }
+
+    .animated{
+      -webkit-transition: all 1.5s ease;
+      -moz-transition: all 1.5s ease;
+      -o-transition: all 1.5s ease;
+      transition: all 1.5s ease;
+    }
   </style>
 </head>
 
 <body class="layout-default page-layout">
 
-  <section class="hero is-info is-bold">
+  <section class="hero is-info is-bold is-large animated" id="hero-section">
   <!-- Hero header: will stick at the top -->
   <div class="hero-head">
     <nav class="nav">
@@ -34,17 +41,11 @@
           <span></span>
         </span>
         <div class="nav-right nav-menu" id="nav-menu">
-          <a class="nav-item is-active">
-            Home
-          </a>
-          <a class="nav-item" id='list-messages'>
-            List Messages
-          </a>
-          <a class="nav-item" onclick="signOut();">
+          <a class="nav-item hidden" onclick="signOut();" id="signout-button">
             Sign Out
           </a>
           <span class="nav-item">
-            <a class="button is-primary is-inverted" id="my-signin2">
+            <a class="button is-primary is-inverted" id="google-signin-button">
               <span class="icon">
                 <i class="fa fa-google"></i>
               </span>
@@ -70,7 +71,7 @@
 
 </section>
 
-<section class="section">
+<section class="section hidden animated" id="main-section">
   <div class="container">
     <div class="columns">
 
@@ -108,6 +109,22 @@
   </div>
 </section>
 
+<footer class="footer">
+  <div class="container">
+    <div class="content has-text-centered">
+      <p>
+        <strong>Expenses</strong>. The source code is licensed
+        <a href="http://opensource.org/licenses/mit-license.php">MIT</a>.
+      </p>
+      <p>
+        <a class="icon" href="https://github.com/samvitm/expenses">
+          <i class="fa fa-github"></i>
+        </a>
+      </p>
+    </div>
+  </div>
+</footer>
+
 <div class="modal" id="status-modal">
   <div class="modal-background"></div>
   <div class="modal-container">
@@ -138,7 +155,7 @@
 <script type="text/javascript">
 
 var googleAuthInstance = {};
-var maxMessages = 1000;
+var maxMessages = 20;
 
 // google sign in functions
 
@@ -161,20 +178,54 @@ function onFailure(error) {
 
 function initClient() {
   gapi.load('auth2', function(){
-      googleAuthInstance = gapi.auth2.init({
-          client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com',
-          scope: 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
-      });
-      googleAuthInstance.attachClickHandler('my-signin2', {}, onSignIn, onFailure);
+    googleAuthInstance = gapi.auth2.init({
+        client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com',
+        scope: 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
+    });
+    googleAuthInstance.isSignedIn.listen(checkSignIn);
+    googleAuthInstance.attachClickHandler('google-signin-button', {}, onSignIn, onFailure);
   });
 };
 
+
+function checkSignIn(isLoggedIn){
+  activateModal();
+  showWorking();
+  if (isLoggedIn) {
+    console.log("User is signed in");
+    isSignedIn();
+  } else {
+    console.log("User is not signed in");
+    googleAuthInstance.attachClickHandler('google-signin-button', {}, onSignIn, onFailure);
+    isSignedOut();
+  }
+}
+
+function isSignedIn(){
+  $("#signout-button").removeClass("hidden");
+  $("#hero-section").removeClass("is-large");
+  $("#main-section").removeClass("hidden");
+  $("#google-signin-button").addClass("hidden");
+  deactivateModal();
+  initApplication();
+}
+
+function isSignedOut(){
+  $("#signout-button").addClass("hidden");
+  $("#main-section").addClass("hidden");
+  $("#hero-section").addClass("is-large");
+  $("#google-signin-button").removeClass("hidden");
+  deactivateModal();
+}
+
 function signOut() {
-   var auth2 = gapi.auth2.getAuthInstance();
-   auth2.signOut().then(function () {
-     console.log('User signed out.');
-   });
- }
+  activateModal()
+  updateStatus("Signing out");
+  var auth2 = gapi.auth2.getAuthInstance();
+  auth2.signOut().then(function () {
+    console.log('User signed out.');
+  });
+}
 
  // end of google sign in functions
 
@@ -220,6 +271,9 @@ function updateStatus(message){
 
 function deactivateModal(){
   $("#status-modal").removeClass("is-active");
+  updateStatus("");
+  hideProgress();
+  showWorking();
 }
 
 function updateProgress(percentage){
@@ -227,6 +281,7 @@ function updateProgress(percentage){
 }
 
 function showWorking(){
+  hideProgress();
   $("#status-working").show()
 }
 
@@ -235,10 +290,12 @@ function hideWorking(){
 }
 
 function showProgress(){
+  hideWorking();
   $("#status-progress-div").show();
 }
 
 function hideProgress(){
+  updateProgress(0);
   $("#status-progress-div").hide();
 }
 
@@ -474,6 +531,52 @@ function loadJsonToDb(data){
 }
 
 
+function initApplication(){
+  var selectedBanks = ["citibank"];
+  _.each(selectedBanks,function(bankName){
+    var bankConfig = config[bankName];
+    createTables(bankName);
+    //process each message type
+    _.each(bankConfig,function(transactionTypeConfig,transactionType){
+      var query = transactionTypeConfig["query"];
+      var tableName = bankName + "_" + transactionType;
+      var doneProcessingMessages = $.Deferred();
+
+      activateModal();
+      showWorking();
+      updateStatus("Fetching messages for " + bankName.toUpperCase() + " " + transactionType.toUpperCase());
+      fetchMessageIds(query).then(function(messageIds){
+        var success = 0, failed = 0, total = messageIds.length;
+        updateStatus("Total messages found : " + total +  ". Requesting data ..");
+        _.each(messageIds,function(mid){
+          getMessage(mid).then(function(messageData){
+            processMessage(messageData,tableName,transactionTypeConfig);
+            updateStatus("Processed Email " + messageData.id);
+            success += 1;
+            updateProgress((success+failed)*100/total);
+            if(success + failed == total){
+              doneProcessingMessages.resolve();
+            }
+          }).catch(function(err){
+            updateStatus("Processed Failed for Email -  " + err);
+            failed += 1;
+            if(success + failed == total){
+              doneProcessingMessages.resolve();
+            }
+          });
+        });
+        showProgress();
+      });
+
+      $.when(doneProcessingMessages).then(function(){
+        renderExpensesTable(tableName,transactionTypeConfig);
+        deactivateModal();
+      })
+
+    });
+  });
+}
+
 
 document.addEventListener("DOMContentLoaded", function() {
 
@@ -486,54 +589,6 @@ document.addEventListener("DOMContentLoaded", function() {
     $menu.toggleClass('is-active');
   });
 
-  var listMessagesElement = document.querySelector('#list-messages');
-  listMessagesElement.addEventListener("click",function(){
-    var selectedBanks = ["citibank"];
-    _.each(selectedBanks,function(bankName){
-      var bankConfig = config[bankName];
-      createTables(bankName);
-      //process each message type
-      _.each(bankConfig,function(transactionTypeConfig,transactionType){
-        var query = transactionTypeConfig["query"];
-        var tableName = bankName + "_" + transactionType;
-        var doneProcessingMessages = $.Deferred();
-
-        activateModal();
-        showWorking();
-        updateStatus("Fetching messages for " + bankName.toUpperCase() + " " + transactionType.toUpperCase());
-        fetchMessageIds(query).then(function(messageIds){
-          var success = 0, failed = 0;
-          var total = messageIds.length;
-          updateStatus("Total messages found : " + total +  ". Requesting data ..");
-          _.each(messageIds,function(mid){
-            getMessage(mid).then(function(messageData){
-              processMessage(messageData,tableName,transactionTypeConfig);
-              updateStatus("Processed Email " + messageData.id);
-              success += 1;
-              updateProgress((success+failed)*100/total);
-              if(success + failed == total){
-                doneProcessingMessages.resolve();
-              }
-            }).catch(function(err){
-              updateStatus("Processed Failed for Email -  " + err);
-              failed += 1;
-              if(success + failed == total){
-                doneProcessingMessages.resolve();
-              }
-            });
-          });
-          hideWorking();
-          showProgress();
-        });
-
-        $.when(doneProcessingMessages).then(function(){
-          renderExpensesTable(tableName,transactionTypeConfig);
-          deactivateModal();
-        })
-
-      });
-    });
-  });
 });
 
 
