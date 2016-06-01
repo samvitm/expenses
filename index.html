@@ -25,6 +25,10 @@
     .pdr1{
       padding-right: 1rem;
     }
+
+    th {
+      text-transform: capitalize;
+    }
   </style>
 </head>
 
@@ -110,21 +114,10 @@
     <div class="columns">
 
       <div class="column is-2 is-narrow-mobile">
-        <aside class="menu">
+        <aside class="menu" id="left-menu">
           <p class="menu-label">
-            General
+            <a href="#">Overview</a>
           </p>
-          <ul class="menu-list">
-            <li><a href="#">Dashboard</a></li>
-          </ul>
-          <p class="menu-label">
-            Transactions
-          </p>
-          <ul class="menu-list">
-            <li><a href="#">Credit</a></li>
-            <li><a href="#">Debit</a></li>
-            <li><a href="#">Balance</a></li>
-          </ul>
         </aside>
       </div>
 
@@ -163,7 +156,7 @@
 <script type="text/javascript">
 
 var googleAuthInstance = {};
-var maxMessages = 500;
+var maxMessages = 100;
 var gmailClientLoaded = $.Deferred();
 
 // google sign in functions
@@ -217,7 +210,6 @@ function checkSignIn(isLoggedIn){
     isSignedIn();
   } else {
     console.log("User is not signed in");
-    googleAuthInstance.attachClickHandler('google-signin-button', {}, onSignIn, onFailure);
     isSignedOut();
   }
 }
@@ -226,6 +218,7 @@ function isSignedIn(){
   var currentUserProfile = googleAuthInstance.currentUser.get().getBasicProfile();;
   updateStatus("Welcome, " + currentUserProfile.getName());
 
+  $("#user-info").removeClass("hidden")
   $("#user-info span").html(currentUserProfile.getName());
   $("#user-info img").attr("src",currentUserProfile.getImageUrl());
 
@@ -361,7 +354,7 @@ function fetchMessageIds(query) {
      request.then(function(resp) {
        result = result.concat(resp.result.messages);
        var nextPageToken = resp.result.nextPageToken;
-       //nextPageToken = undefined; //stopping the next execution for testing
+       nextPageToken = undefined; //stopping the next execution for testing
        if (nextPageToken) {
          request = gapi.client.gmail.users.messages.list({
            'userId': 'me',
@@ -543,6 +536,32 @@ function renderExpensesTable(tableName,transactionTypeConfig){
   contentDiv.innerHTML = tableHTML;
 }
 
+function renderMenu(bankName,bankConfig){
+  console.log("Rendering menu");
+  var $mainMenu = $("#left-menu");
+  var menuLabelId = bankName + "-menu-label";
+  var $menuLabel = $("<p>").attr("class","menu-label").attr("id",menuLabelId).html(bankName.toUpperCase());
+  var menuId = bankName + "-menu";
+  var $menu = $("<ul>").attr("class","menu-list").attr("id",menuId);
+  _.each(bankConfig,function(transactionTypeConfig,transactionType){
+    var menuText = _.capitalize(transactionType);
+    var $menuItem = $("<li>");
+    var $link = $("<a>").attr("href","#").html(menuText);
+    $menuItem.append($link);
+    $menu.append($menuItem);
+
+    var tableName = bankName + "_" + transactionType;
+    $menuItem.click(function(){
+      renderExpensesTable(tableName,transactionTypeConfig);
+    });
+
+  });
+  $("#"+menuLabelId).remove();
+  $("#"+menuId).remove();
+  $mainMenu.append($menuLabel);
+  $mainMenu.append($menu);
+}
+
 function renderRightInfo(){
   console.log("Rendering right information");
   var db = alasql.databases.expenses;
@@ -567,6 +586,7 @@ function initApplication(){
   _.each(selectedBanks,function(bankName){
     var bankConfig = config[bankName];
     createTables(bankName);
+    renderMenu(bankName,bankConfig);
     //process each message type
     _.each(bankConfig,function(transactionTypeConfig,transactionType){
       var query = transactionTypeConfig["query"];
@@ -580,6 +600,7 @@ function initApplication(){
         var success = 0, failed = 0, total = messageIds.length;
         updateStatus("Total messages found : " + total +  ". Requesting data ..");
         _.each(messageIds,function(mid){
+
           getMessage(mid).then(function(messageData){
             processMessage(messageData,tableName,transactionTypeConfig);
             updateStatus("Processed Email " + messageData.id);
@@ -601,7 +622,6 @@ function initApplication(){
       });
 
       $.when(doneProcessingMessages).then(function(){
-        renderExpensesTable(tableName,transactionTypeConfig);
         deactivateModal();
       })
 
@@ -627,11 +647,10 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 <!-- BEGIN: Underscore Template Definition. -->
 <script type="text/template" class="templates" id="transaction-template">
-<h2>Rendering table : <%= tableName %></h2>
 <table class="table">
   <thead>
     <tr>
-      <th>Date</th>
+      <th style="width:20%">Date</th>
       <th>Transaction</th>
       <% _.each(fields,function(f){ %>
         <th> <%= f.name %></th>
@@ -656,3 +675,4 @@ document.addEventListener("DOMContentLoaded", function() {
 <script src="https://apis.google.com/js/client.js?onload=handleClientLoad" async defer></script>
 <script type="text/javascript" src="https://cdn.jsdelivr.net/alasql/0.2.6/alasql.min.js"></script>
 <script type="text/javascript" src="https://cdn.jsdelivr.net/lodash/4.12.0/lodash.min.js"></script>
+<script src="https://code.highcharts.com/highcharts.js"></script>
