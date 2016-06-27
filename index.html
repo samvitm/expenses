@@ -29,6 +29,15 @@
     th {
       text-transform: capitalize;
     }
+
+    .big-font{
+      font-size: 2rem;
+      font-weight: 200;
+    }
+
+    .bold{
+      font-weight: bold;
+    }
   </style>
 </head>
 
@@ -115,7 +124,7 @@
 
       <div class="column is-2 is-narrow-mobile">
         <aside class="menu" id="left-menu">
-          <p class="menu-label">
+          <p class="menu-label" id="menu-overview">
             <a href="#">Overview</a>
           </p>
         </aside>
@@ -156,7 +165,7 @@
 <script type="text/javascript">
 
 var googleAuthInstance = {};
-var maxMessages = 100;
+var maxMessages = 500;
 var gmailClientLoaded = $.Deferred();
 
 // google sign in functions
@@ -338,7 +347,7 @@ function createTables(bankName){
  var db = alasql.databases.expenses;
  var bankConfig = config[bankName];
  _.each(bankConfig,function(transactionTypeConfig,transactionType){
-   var createStatement = "CREATE TABLE IF NOT EXISTS %tableName ( id string, date string, main_message string, %tableColumns, UNIQUE(id)  )";
+   var createStatement = "CREATE TABLE IF NOT EXISTS %tableName ( id string, date string, day int, month string, year int, dayofweek string, main_message string, %tableColumns, UNIQUE(id)  )";
    var tableName = bankName + "_" + transactionType;
    var tableColumns = _.map(transactionTypeConfig["fields"],function(field){
      return field["name"] + " " + field["type"];
@@ -482,23 +491,45 @@ function getMetaData(message){
   return metaData;
 };
 
+var monthNames = ["January", "February", "March", "April", "May", "June","July", "August", "September", "October", "November", "December"];
+
 //TODO - instead of values explicitly mention fields so that order is not effected
 function writeMessageToDB(message,tableName,messageConfig){
   var db = alasql.databases.expenses;
-  var insertQuery = "INSERT INTO %tableName values ( '%id', '%date', '%mainMessage', '%otherColumns')";
+  var insertQuery = "INSERT INTO %tableName values ( '%id', '%date','%day',%month, %year, '%dayofweek', '%mainMessage', '%otherColumns')";
   //updateStatus("inserting message ", message);
   var dataValues = _.map(messageConfig["fields"],function(field){
    var fieldName = field["name"]
    return message["extractedData"][fieldName]
   }).join("', '")
+
+  var dateField = new Date(message["metaData"]["date"]);
+
   var finalQuery = parameterizedQuery(insertQuery,{
    tableName:tableName,
    mainMessage : message["extractedData"]["mainMessage"],
    id:message["id"],
    date:message["metaData"]["date"],
+   day:dateField.getDate(),
+   month:dateField.getMonth(),
+   year:dateField.getFullYear(),
+   dayofweek:dateField.getDay(),
    otherColumns: dataValues
   });
   db.exec(finalQuery);
+}
+
+function calculateSum(startDate, endDate, tableName, attr){
+    var db = alasql.databases.expenses;
+    var query = "SELECT * FROM %tableName WHERE date >= %start and date <= %end ";
+    var replace = {
+      "tableName": tableName,
+      "start" : startDate.getTime(),
+      "end" : endDate.getTime()
+    }
+    query = parameterizedQuery(query,replace);
+    var result = db.exec(query);
+    return _.sumBy(result,attr);
 }
 
 // all tables must contain messageId and date timestamp
@@ -516,6 +547,10 @@ var config = {
         { "name" : "merchant",
           "type" : "string",
           "extractors" : ["at\\s*(.*)"]
+        },
+        { "name" : "card",
+          "type" : "string",
+          "extractors" : ["\\d+X+(\\d+)"]
         }
       ]
     }
@@ -574,11 +609,88 @@ function renderRightInfo(){
   node.innerHTML = "Total credit card spend: " + sumCredit.totalSpend;
 }
 
+function renderColumnChart(divId,xAxisLabels, series){
+  $(divId).highcharts({
+        chart: {
+            type: 'column'
+        },
+        title: {
+            text: '',
+            disable: true
+        },
+        xAxis: {
+            categories: xAxisLabels,
+        },
+        yAxis: {
+            min: 0,
+            title: {
+                text: 'Rs'
+            }
+        },
+        tooltip: {
+          pointFormat: "{point.y:,.2f}"
+        },
+        plotOptions: {
+            column: {
+                pointPadding: 0.2,
+                borderWidth: 0
+            }
+        },
+        series: series,
+    });
+}
+
+function renderOverview(){
+  console.log("Rendering overview");
+  var curDate = new Date(), y = curDate.getFullYear(), m = curDate.getMonth();
+  var firstDay = new Date(y, m, 1);
+  var lastDay = new Date(y, m + 1, 0);
+  var curMonthSpend = calculateSum(firstDay,lastDay,'citibank_credit','amount');
+
+  var prevMonthFirstDay = new Date(y ,m-1, 1);
+  var prevMonthLastDay = new Date(y, m, 0);
+  var prevMonthSpend = calculateSum(prevMonthFirstDay,prevMonthLastDay,'citibank_credit','amount');
+
+  var db = alasql.databases.expenses;
+
+  var query = "SELECT * from %tableName where date >= %firstDay order by amount desc limit 5";
+  var params = {'tableName' : 'citibank_credit', 'firstDay' : firstDay.getTime()}
+  var topSpends = db.exec(parameterizedQuery(query,params));
+
+  query = "SELECT merchant,sum(amount) as total from %tableName where date>= %firstDay group by merchant order by total desc limit 10";
+  var topMerchants = db.exec(parameterizedQuery(query,params));
+
+  query = "SELECT sum(amount) as total, month, year from %tableName group by month,year order by year, month";
+  var monthlySpends = db.exec(parameterizedQuery(query,params));
+  var xAxisLabels = _.map(monthlySpends,function(row){
+    return monthNames[row.month] + "-" + row.year;
+  });
+  var series = [{
+    name: 'Spends',
+    data: _.map(monthlySpends, 'total'),
+  }]
+
+
+  console.log(monthlySpends);
+
+  var $contentDiv = $("#content");
+  var templateVars = {
+    "prevMonthSpend" : prevMonthSpend,
+    "curMonthSpend" : curMonthSpend,
+    "topSpends" : topSpends,
+    "topMerchants" : topMerchants,
+  }
+  var template = _.template(document.querySelector("#overview-template").innerHTML);
+  var content = template(templateVars);
+  $contentDiv.html(content);
+
+  renderColumnChart("#monthly-trends-graph",xAxisLabels,series);
+}
+
 function loadJsonToDb(data){
   var db = alasql.databases.expenses;
   db.tables.transactions.data = data;
 }
-
 
 function initApplication(){
 
@@ -596,9 +708,12 @@ function initApplication(){
       activateModal();
       showWorking();
       updateStatus("Fetching messages for " + bankName.toUpperCase() + " " + transactionType.toUpperCase());
+
       fetchMessageIds(query).then(function(messageIds){
         var success = 0, failed = 0, total = messageIds.length;
+
         updateStatus("Total messages found : " + total +  ". Requesting data ..");
+
         _.each(messageIds,function(mid){
 
           getMessage(mid).then(function(messageData){
@@ -610,19 +725,21 @@ function initApplication(){
               doneProcessingMessages.resolve();
             }
           }).catch(function(err){
-            updateStatus("Processed Failed for Email -  " + err);
+            updateStatus("Processing Failed for Email -  " + err);
             failed += 1;
             updateProgress((success+failed)*100/total);
             if(success + failed == total){
               doneProcessingMessages.resolve();
             }
           });
+
         });
         showProgress();
       });
 
       $.when(doneProcessingMessages).then(function(){
         deactivateModal();
+        renderOverview();
       })
 
     });
@@ -640,6 +757,16 @@ document.addEventListener("DOMContentLoaded", function() {
     $(this).toggleClass('is-active');
     $menu.toggleClass('is-active');
   });
+
+  $("#menu-overview").click(function(){
+    renderOverview();
+  });
+
+  Highcharts.setOptions({
+        lang: {
+            thousandsSep: ','
+        }
+    });
 
 });
 
@@ -670,9 +797,101 @@ document.addEventListener("DOMContentLoaded", function() {
   </tbody>
 </table>
 </script>
+
+
+<script type="text/template" class="templates" id="overview-template">
+
+  <h2 class="title">Credit Cards</h2>
+  <div class="columns">
+    <div class="column">
+      <article class="message is-success has-text-centered">
+        <div class="message-header">
+          This month
+        </div>
+        <div class="message-body">
+          <h1 class="big-font"> <%= accounting.formatMoney(curMonthSpend,'&#8377;') %></h1>
+        </div>
+      </article>
+    </div>
+    <div class="column ">
+      <article class="message is-info has-text-centered">
+        <div class="message-header">
+          Previous Month
+        </div>
+        <div class="message-body">
+          <h1 class="big-font"> <%= accounting.formatMoney(prevMonthSpend,'&#8377;') %></h1>
+        </div>
+      </article>
+    </div>
+  </div>
+
+  <hr>
+
+  <h2 class="title">Top Expenses</h2>
+  <h5 class="subtitle">
+    this month
+  </h5>
+
+  <div class="columns">
+    <div class="column">
+      <h3 class="bold">By Amount</h3>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:20%">Date</th>
+            <th>Transaction</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% _.each(topSpends,function(t){ %>
+            <tr>
+              <td><%= formatDate(t.date) %></td>
+              <td><%= _.unescape(t.main_message) %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+
+    </div>
+    <div class="column">
+      <h3 class='bold'>By Merchant</h3>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Merchant</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% _.each(topMerchants,function(t){ %>
+            <tr>
+              <td><%= t.merchant %></td>
+              <td><%= accounting.formatMoney(t.total,'&#8377;') %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+
+    </div>
+  </div>
+
+  <hr>
+
+  <h2 class="title">Monthly Trends</h2>
+
+  <div id="monthly-trends-graph">
+  </div>
+
+
+</script>
+
+
 <!-- END: Underscore Template Definition. -->
 <script src="https://apis.google.com/js/platform.js?onload=initClient" async defer></script>
 <script src="https://apis.google.com/js/client.js?onload=handleClientLoad" async defer></script>
 <script type="text/javascript" src="https://cdn.jsdelivr.net/alasql/0.2.6/alasql.min.js"></script>
 <script type="text/javascript" src="https://cdn.jsdelivr.net/lodash/4.12.0/lodash.min.js"></script>
 <script src="https://code.highcharts.com/highcharts.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/accounting.js/0.4.1/accounting.min.js"></script>
