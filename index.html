@@ -363,7 +363,8 @@ function fetchMessageIds(query) {
      request.then(function(resp) {
        result = result.concat(resp.result.messages);
        var nextPageToken = resp.result.nextPageToken;
-       nextPageToken = undefined; //stopping the next execution for testing
+       if(maxMessages < 200)
+        nextPageToken = undefined; //stopping the next execution for testing
        if (nextPageToken) {
          request = gapi.client.gmail.users.messages.list({
            'userId': 'me',
@@ -387,16 +388,33 @@ function fetchMessageIds(query) {
  return promise;
 }
 
+var gmailGetMessageQuotaLimit = 15;
+
 function getMessage(messageId) {
   var request = gapi.client.gmail.users.messages.get({
     'userId': 'me',
     'id': messageId.id
   });
+
+  if ( typeof getMessage.counter == 'undefined' ) {
+      getMessage.counter = 0;
+  }
+  ++getMessage.counter;
+
+  var delayFetchTime = 1000*getMessage.counter/gmailGetMessageQuotaLimit;
+
+
   var promise = new Promise(function(resolve,reject){
+
+    _.delay(function(){
       request.then(function(resp){
         //updateStatus("Fetching message complete for messageid : " + messageId.id);
         resolve(resp.result);
-      },rejectFn);
+      },function(r){
+        reject("Error")
+      });
+    },delayFetchTime)
+
   });
   return promise;
 }
@@ -640,6 +658,22 @@ function renderColumnChart(divId,xAxisLabels, series){
     });
 }
 
+function renderStockChart(divId, series){
+  $(divId).highcharts('StockChart', {
+       title : {
+           text : ''
+       },
+       rangeSelector: {
+         selected : 0,
+         inputEnabled: false,
+       },
+       tooltip: {
+         pointFormat: "{point.y:,.2f}"
+       },
+       series : series
+   });
+}
+
 function renderOverview(){
   console.log("Rendering overview");
   var curDate = new Date(), y = curDate.getFullYear(), m = curDate.getMonth();
@@ -660,7 +694,7 @@ function renderOverview(){
   query = "SELECT merchant,sum(amount) as total from %tableName where date>= %firstDay group by merchant order by total desc limit 10";
   var topMerchants = db.exec(parameterizedQuery(query,params));
 
-  query = "SELECT sum(amount) as total, month, year from %tableName group by month,year order by year, month";
+  query = "SELECT sum(amount) as total, month, year from %tableName group by month,year order by year, month limit 999";
   var monthlySpends = db.exec(parameterizedQuery(query,params));
   var xAxisLabels = _.map(monthlySpends,function(row){
     return monthNames[row.month] + "-" + row.year;
@@ -668,6 +702,26 @@ function renderOverview(){
   var series = [{
     name: 'Spends',
     data: _.map(monthlySpends, 'total'),
+  }]
+
+  query = "SELECT date,amount,merchant from %tableName order by date desc limit 999";
+  var exps = db.exec(parameterizedQuery(query,params));
+  exps = exps.reverse();
+  var seriesData = _.map(exps,function(row){
+    return {
+      x: parseInt(row.date),
+      y: row.amount,
+      w: row.merchant
+    }
+  })
+  var expSeries = [{
+    name: 'Transactions',
+    data: seriesData,
+    tooltip: {
+      pointFormatter: function(){
+        return  this.y + " - " + this.w;
+      }
+    }
   }]
 
 
@@ -685,6 +739,7 @@ function renderOverview(){
   $contentDiv.html(content);
 
   renderColumnChart("#monthly-trends-graph",xAxisLabels,series);
+  renderStockChart("#daily-trends-graph",expSeries);
 }
 
 function loadJsonToDb(data){
@@ -718,7 +773,7 @@ function initApplication(){
 
           getMessage(mid).then(function(messageData){
             processMessage(messageData,tableName,transactionTypeConfig);
-            updateStatus("Processed Email " + messageData.id);
+            updateStatus("Processed Email " + success + "/" + total);
             success += 1;
             updateProgress((success+failed)*100/total);
             if(success + failed == total){
@@ -827,6 +882,14 @@ document.addEventListener("DOMContentLoaded", function() {
 
   <hr>
 
+  <h2 class="title">Spending Trends</h2>
+
+  <div id="daily-trends-graph">
+  </div>
+
+
+  <hr>
+
   <h2 class="title">Top Expenses</h2>
   <h5 class="subtitle">
     this month
@@ -885,6 +948,8 @@ document.addEventListener("DOMContentLoaded", function() {
   </div>
 
 
+
+
 </script>
 
 
@@ -893,5 +958,5 @@ document.addEventListener("DOMContentLoaded", function() {
 <script src="https://apis.google.com/js/client.js?onload=handleClientLoad" async defer></script>
 <script type="text/javascript" src="https://cdn.jsdelivr.net/alasql/0.2.6/alasql.min.js"></script>
 <script type="text/javascript" src="https://cdn.jsdelivr.net/lodash/4.12.0/lodash.min.js"></script>
-<script src="https://code.highcharts.com/highcharts.js"></script>
+<script src="https://code.highcharts.com/stock/highstock.js"></script>
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/accounting.js/0.4.1/accounting.min.js"></script>
