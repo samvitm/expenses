@@ -192,7 +192,7 @@ function initClient() {
   gapi.load('auth2', function(){
     gapi.auth2.init({
         client_id: '267194503259-b30cjagiluke8vmvr4rr3dq7664s2k5r.apps.googleusercontent.com',
-        scope: 'profile email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly',
+        scope: 'profile email https://www.googleapis.com/auth/gmail.readonly',
     }).then(function(){
 
       googleAuthInstance = gapi.auth2.getAuthInstance();
