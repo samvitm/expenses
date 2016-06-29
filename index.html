@@ -165,7 +165,7 @@
 <script type="text/javascript">
 
 var googleAuthInstance = {};
-var maxMessages = 500;
+var maxMessages = 100;
 var gmailClientLoaded = $.Deferred();
 
 // google sign in functions
@@ -572,6 +572,19 @@ var config = {
         }
       ]
     }
+  },
+  "uber" : {
+    "rides" : {
+      "query" : "receipts uber.com -cancelled ",
+      "mainMessageExtractor" : 'Thanks for choosing Uber(.*?)',
+      "fields" : [
+        { "name" : "amount",
+          "type" : "float",
+          "extractors" : ["\\s*([0-9\\,\\.]+)[\\sA-Z]+was"]
+        },
+
+      ]
+    }
   }
 }
 
@@ -722,10 +735,7 @@ function renderOverview(){
         return  this.y + " - " + this.w;
       }
     }
-  }]
-
-
-  console.log(monthlySpends);
+  }];
 
   var $contentDiv = $("#content");
   var templateVars = {
@@ -742,10 +752,46 @@ function renderOverview(){
   renderStockChart("#daily-trends-graph",expSeries);
 }
 
-function loadJsonToDb(data){
+function saveToLocalStorage(){
+
   var db = alasql.databases.expenses;
-  db.tables.transactions.data = data;
+  var expenses = {}
+  var res = alasql('SHOW TABLES FROM expenses');
+  _.each(res,function(table){
+    var tableName = table.tableid;
+    var rows = db.exec("SELECT * FROM " + tableName);
+    expenses[tableName] = JSON.stringify(rows);
+  });
+
+
+  _.each(expenses,function(rows,tableName){
+    localStorage.setItem(tableName,rows);
+  });
 }
+
+function loadDatafromLocalStorage(tableName){
+  if(localStorage.getItem(tableName)){
+    var rows = localStorage.getItem(tableName);
+    var rowsObj = JSON.parse(rows);
+    var db = alasql.databases.expenses;
+    db.tables[tableName].data = rowsObj;
+  }
+}
+
+function isMessagePresent(messageId,tableName){
+  var db = alasql.databases.expenses;
+  var query = "SELECT * FROM %tableName where id = '%messageId'";
+  var params = {tableName: tableName, messageId: messageId.id};
+  var fQuery = parameterizedQuery(query,params);
+  var res = db.exec(fQuery);
+  if(!_.isEmpty(res)){
+    return true
+  }
+  return false;
+}
+
+
+
 
 function initApplication(){
 
@@ -764,6 +810,8 @@ function initApplication(){
       showWorking();
       updateStatus("Fetching messages for " + bankName.toUpperCase() + " " + transactionType.toUpperCase());
 
+      loadDatafromLocalStorage(tableName);
+
       fetchMessageIds(query).then(function(messageIds){
         var success = 0, failed = 0, total = messageIds.length;
 
@@ -771,22 +819,29 @@ function initApplication(){
 
         _.each(messageIds,function(mid){
 
-          getMessage(mid).then(function(messageData){
-            processMessage(messageData,tableName,transactionTypeConfig);
-            updateStatus("Processed Email " + success + "/" + total);
+          if(!isMessagePresent(mid,tableName)){
+            getMessage(mid).then(function(messageData){
+              processMessage(messageData,tableName,transactionTypeConfig);
+              updateStatus("Processed Email " + success + "/" + total);
+              success += 1;
+              updateProgress((success+failed)*100/total);
+              if(success + failed == total){
+                doneProcessingMessages.resolve();
+              }
+            }).catch(function(err){
+              updateStatus("Processing Failed for Email -  " + err);
+              failed += 1;
+              updateProgress((success+failed)*100/total);
+              if(success + failed == total){
+                doneProcessingMessages.resolve();
+              }
+            });
+          } else {
             success += 1;
-            updateProgress((success+failed)*100/total);
             if(success + failed == total){
               doneProcessingMessages.resolve();
             }
-          }).catch(function(err){
-            updateStatus("Processing Failed for Email -  " + err);
-            failed += 1;
-            updateProgress((success+failed)*100/total);
-            if(success + failed == total){
-              doneProcessingMessages.resolve();
-            }
-          });
+          }
 
         });
         showProgress();
@@ -795,6 +850,7 @@ function initApplication(){
       $.when(doneProcessingMessages).then(function(){
         deactivateModal();
         renderOverview();
+        saveToLocalStorage();
       })
 
     });
