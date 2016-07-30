@@ -165,7 +165,7 @@
 <script type="text/javascript">
 
 var googleAuthInstance = {};
-var maxMessages = 500;
+var maxMessages = 1000;
 var gmailClientLoaded = $.Deferred();
 
 // google sign in functions
@@ -334,6 +334,11 @@ function hideProgress(){
 function formatDate(timestamp){
   var d = new Date(parseInt(timestamp));
   return d.toDateString();
+}
+
+function flushReload(tableName){
+  removeFromLocalStorage(tableName);
+  location.reload();
 }
 
 
@@ -571,6 +576,20 @@ var config = {
           "extractors" : ["\\d+X+(\\d+)"]
         }
       ]
+    },
+    "debit" : {
+      "query" : "from:CitiAlert.India@citicorp.com subject:CitiAlert - Balance in your account",
+      "mainMessageExtractor" : 'bgcolor="#f1fcf9">(.*)',
+      "fields" : [
+        { "name" : "balance",
+          "type" : "float",
+          "extractors" : ["Rs ([0-9\\.]+)\\..*?"]
+        },
+        { "name" : "withdrawl",
+          "type" : "float",
+          "extractors" : ["upto Rs ([0-9\\,\\.]+)\\..*?"]
+        }
+      ]
     }
   },
   "uber" : {
@@ -717,6 +736,16 @@ function renderOverview(){
     data: _.map(monthlySpends, 'total'),
   }]
 
+  query = "SELECT max(balance) as total, month, year from %tableName group by month,year order by year, month limit 999";
+  var balmonthlySpends = db.exec(parameterizedQuery(query,{tableName: 'citibank_debit'}));
+  var balancexAxisLabels = _.map(balmonthlySpends,function(row){
+    return monthNames[row.month] + "-" + row.year;
+  });
+  var balanceSeriesColumn = [{
+    name: 'Average Balance',
+    data: _.map(balmonthlySpends, 'total'),
+  }]
+
   query = "SELECT date,amount,merchant from %tableName order by date desc limit 999";
   var exps = db.exec(parameterizedQuery(query,params));
   exps = exps.reverse();
@@ -737,6 +766,26 @@ function renderOverview(){
     }
   }];
 
+  query = "SELECT date,balance,withdrawl from %tableName where balance > 0 order by date desc limit 999";
+  var exps = db.exec(parameterizedQuery(query,{tableName: 'citibank_debit'}));
+  exps = exps.reverse();
+  var seriesData = _.map(exps,function(row){
+    return {
+      x: parseInt(row.date),
+      y: row.balance,
+      w: row.withdrawl
+    }
+  })
+  var balancesSeries = [{
+    name: 'Balances',
+    data: seriesData,
+    tooltip: {
+      pointFormatter: function(){
+        return  accounting.formatMoney(this.y,'Rs') + ", Withdrawable Balance " + accounting.formatMoney(this.w,'Rs');
+      }
+    }
+  }];
+
   var $contentDiv = $("#content");
   var templateVars = {
     "prevMonthSpend" : prevMonthSpend,
@@ -749,7 +798,9 @@ function renderOverview(){
   $contentDiv.html(content);
 
   renderColumnChart("#monthly-trends-graph",xAxisLabels,series);
+  renderColumnChart("#balmonthly-trends-graph",balancexAxisLabels,balanceSeriesColumn);
   renderStockChart("#daily-trends-graph",expSeries);
+  renderStockChart("#balances-trends-graph",balancesSeries);
 }
 
 function saveToLocalStorage(){
@@ -767,6 +818,10 @@ function saveToLocalStorage(){
   _.each(expenses,function(rows,tableName){
     localStorage.setItem(tableName,rows);
   });
+}
+
+function removeFromLocalStorage(tableName){
+  localStorage.removeItem(tableName);
 }
 
 function loadDatafromLocalStorage(tableName){
@@ -885,6 +940,7 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 <!-- BEGIN: Underscore Template Definition. -->
 <script type="text/template" class="templates" id="transaction-template">
+<a class="button is-pulled-right" onclick="flushReload('<%=tableName%>')">Reload Data</a>
 <table class="table">
   <thead>
     <tr>
@@ -937,6 +993,22 @@ document.addEventListener("DOMContentLoaded", function() {
   </div>
 
   <hr>
+
+  <h2 class="title">Monthly Trends</h2>
+
+  <div id="monthly-trends-graph">
+  </div>
+
+  <hr>
+
+  <h2 class="title">Account Balance Monthly Trends</h2>
+
+  <div id="balmonthly-trends-graph">
+  </div>
+
+
+
+    <hr>
 
   <h2 class="title">Spending Trends</h2>
 
@@ -998,13 +1070,10 @@ document.addEventListener("DOMContentLoaded", function() {
 
   <hr>
 
-  <h2 class="title">Monthly Trends</h2>
+  <h2 class="title">Account Balance Trends</h2>
 
-  <div id="monthly-trends-graph">
+  <div id="balances-trends-graph">
   </div>
-
-
-
 
 </script>
 
